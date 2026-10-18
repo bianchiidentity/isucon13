@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -197,13 +199,31 @@ func searchLivestreamsHandler(c echo.Context) error {
 			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get keyTaggedLivestreams: "+err.Error())
 		}
 
-		for _, keyTaggedLivestream := range keyTaggedLivestreams {
-			ls := LivestreamModel{}
-			if err := tx.GetContext(ctx, &ls, "SELECT * FROM livestreams WHERE id = ?", keyTaggedLivestream.LivestreamID); err != nil {
+		if len(keyTaggedLivestreams) > 0 {
+			ids := make([]int64, len(keyTaggedLivestreams))
+			for i, tagged := range keyTaggedLivestreams {
+				ids[i] = tagged.LivestreamID
+			}
+			query, params, err := sqlx.In("SELECT * FROM livestreams WHERE id IN (?)", ids)
+			if err != nil {
+				return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+			}
+			var models []LivestreamModel
+			if err := tx.SelectContext(ctx, &models, query, params...); err != nil {
 				return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestreams: "+err.Error())
 			}
-
-			livestreamModels = append(livestreamModels, &ls)
+			byID := make(map[int64]*LivestreamModel, len(models))
+			for i := range models {
+				byID[models[i].ID] = &models[i]
+			}
+			// 元のタグ検索結果の順序と重複を保つ。
+			for _, id := range ids {
+				model, ok := byID[id]
+				if !ok {
+					return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestreams: "+sql.ErrNoRows.Error())
+				}
+				livestreamModels = append(livestreamModels, model)
+			}
 		}
 	} else {
 		// 検索条件なし
@@ -221,13 +241,9 @@ func searchLivestreamsHandler(c echo.Context) error {
 		}
 	}
 
-	livestreams := make([]Livestream, len(livestreamModels))
-	for i := range livestreamModels {
-		livestream, err := fillLivestreamResponse(ctx, tx, *livestreamModels[i])
-		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill livestream: "+err.Error())
-		}
-		livestreams[i] = livestream
+	livestreams, err := fillSearchLivestreamResponses(ctx, tx, livestreamModels)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill livestream: "+err.Error())
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -524,4 +540,126 @@ func fillLivestreamResponse(ctx context.Context, tx *sqlx.Tx, livestreamModel Li
 		EndAt:        livestreamModel.EndAt,
 	}
 	return livestream, nil
+}
+
+// 検索リクエスト内でだけ使う一括取得。同じトランザクションの読み取りを保つ。
+func fillSearchLivestreamResponses(ctx context.Context, tx *sqlx.Tx, models []*LivestreamModel) ([]Livestream, error) {
+	result := make([]Livestream, len(models))
+	if len(models) == 0 {
+		return result, nil
+	}
+	userIDs, streamIDs := []int64{}, []int64{}
+	seenUsers, seenStreams := map[int64]bool{}, map[int64]bool{}
+	for _, model := range models {
+		if !seenUsers[model.UserID] {
+			userIDs = append(userIDs, model.UserID)
+			seenUsers[model.UserID] = true
+		}
+		if !seenStreams[model.ID] {
+			streamIDs = append(streamIDs, model.ID)
+			seenStreams[model.ID] = true
+		}
+	}
+	selectIDs := func(dest interface{}, query string, ids []int64) error {
+		query, args, err := sqlx.In(query, ids)
+		if err != nil {
+			return err
+		}
+		return tx.SelectContext(ctx, dest, query, args...)
+	}
+	var users []UserModel
+	if err := selectIDs(&users, "SELECT * FROM users WHERE id IN (?)", userIDs); err != nil {
+		return nil, err
+	}
+	var themes []ThemeModel
+	if err := selectIDs(&themes, "SELECT * FROM themes WHERE user_id IN (?) ORDER BY id", userIDs); err != nil {
+		return nil, err
+	}
+	var icons []struct {
+		UserID int64  `db:"user_id"`
+		Image  []byte `db:"image"`
+	}
+	if err := selectIDs(&icons, "SELECT user_id, image FROM icons WHERE user_id IN (?) ORDER BY id", userIDs); err != nil {
+		return nil, err
+	}
+	themesByUser := map[int64]ThemeModel{}
+	for _, theme := range themes {
+		if _, ok := themesByUser[theme.UserID]; !ok {
+			themesByUser[theme.UserID] = theme
+		}
+	}
+	images := map[int64][]byte{}
+	for _, icon := range icons {
+		if _, ok := images[icon.UserID]; !ok {
+			images[icon.UserID] = icon.Image
+		}
+	}
+	owners := map[int64]User{}
+	var fallback []byte
+	fallbackLoaded := false
+	for _, user := range users {
+		theme, ok := themesByUser[user.ID]
+		if !ok {
+			return nil, sql.ErrNoRows
+		}
+		image, ok := images[user.ID]
+		if !ok {
+			if !fallbackLoaded {
+				var err error
+				fallback, err = os.ReadFile(fallbackImage)
+				if err != nil {
+					return nil, err
+				}
+				fallbackLoaded = true
+			}
+			image = fallback
+		}
+		hash := sha256.Sum256(image)
+		owners[user.ID] = User{ID: user.ID, Name: user.Name, DisplayName: user.DisplayName, Description: user.Description,
+			Theme: Theme{ID: theme.ID, DarkMode: theme.DarkMode}, IconHash: fmt.Sprintf("%x", hash)}
+	}
+	var links []LivestreamTagModel
+	// 既存の livestream_id 索引による取得順（同一配信内は主キー順）を維持する。
+	if err := selectIDs(&links, "SELECT * FROM livestream_tags WHERE livestream_id IN (?) ORDER BY livestream_id, id", streamIDs); err != nil {
+		return nil, err
+	}
+	tagIDs := []int64{}
+	seenTags := map[int64]bool{}
+	for _, link := range links {
+		if !seenTags[link.TagID] {
+			tagIDs = append(tagIDs, link.TagID)
+			seenTags[link.TagID] = true
+		}
+	}
+	tagsByID := map[int64]Tag{}
+	if len(tagIDs) > 0 {
+		var tags []TagModel
+		if err := selectIDs(&tags, "SELECT * FROM tags WHERE id IN (?)", tagIDs); err != nil {
+			return nil, err
+		}
+		for _, tag := range tags {
+			tagsByID[tag.ID] = Tag{ID: tag.ID, Name: tag.Name}
+		}
+	}
+	streamTags := map[int64][]Tag{}
+	for _, link := range links {
+		tag, ok := tagsByID[link.TagID]
+		if !ok {
+			return nil, sql.ErrNoRows
+		}
+		streamTags[link.LivestreamID] = append(streamTags[link.LivestreamID], tag)
+	}
+	for i, model := range models {
+		owner, ok := owners[model.UserID]
+		if !ok {
+			return nil, sql.ErrNoRows
+		}
+		tags := streamTags[model.ID]
+		if tags == nil {
+			tags = []Tag{}
+		}
+		result[i] = Livestream{ID: model.ID, Owner: owner, Title: model.Title, Description: model.Description,
+			PlaylistUrl: model.PlaylistUrl, ThumbnailUrl: model.ThumbnailUrl, Tags: tags, StartAt: model.StartAt, EndAt: model.EndAt}
+	}
+	return result, nil
 }
