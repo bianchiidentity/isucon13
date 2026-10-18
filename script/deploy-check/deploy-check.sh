@@ -4,6 +4,7 @@
 # 使い方: ./deploy-check --before            変更の前: /initialize の後に paths.txt のリクエストを送り、応答を保存する
 #         ./deploy-check --after             変更の後: 同じリクエストを送り、保存した応答と比べる（違えば終了コード 1）
 #         ./deploy-check --no-init [...]     /initialize を呼ばない（今のデータのまま比べる）
+#         ./deploy-check --version           ソース・ビルド成果物・実行中バイナリの版を確認する（HTTP・初期化なし）
 #
 # paths.txt の 1 行が 1 リクエスト。種類ごとの比べ方:
 #   json:   ステータス、Content-Type、header= で指定したヘッダ、jq -S で整形した本文（キーの順や空白の違いは無視）
@@ -26,11 +27,18 @@ for arg in "$@"; do
     --before) MODE=before ;;
     --after) MODE=after ;;
     --no-init) NO_INIT=1 ;;
+    --version) MODE=version ;;
     -h|--help) sed -n '4,6p' "$0"; exit 0 ;;
     *) echo "unknown option: $arg" >&2; exit 2 ;;
   esac
 done
 [[ -n $MODE ]] || { sed -n '4,6p' "$0" >&2; exit 2; }
+if [[ $MODE == version ]]; then
+  source "$REPO_DIR/script/deploy/deploy.env"
+  source "$REPO_DIR/script/deploy/lib/steps.sh"
+  app::verify_running
+  exit 0
+fi
 command -v jq > /dev/null || die "jq がない（base-conf の apply.sh で入る。sudo apt-get install -y jq でもよい）"
 [[ -f $PATHS_FILE ]] || die "$PATHS_FILE がない"
 
