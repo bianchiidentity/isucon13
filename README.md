@@ -14,6 +14,22 @@
 | [`./deploy`](script/deploy/README.md) | リポジトリのコードと設定をサーバーに反映する |
 | [`./deploy-check`](script/deploy-check/README.md) | 変更の前後で応答が変わっていないかを確かめる |
 
+## デプロイ
+
+最初に一度だけ、`script/deploy/deploy.env` に問題ごとの値（サービス名、ビルド、DB、スキーマ）を書き、base-conf を入れた後に `script/deploy/collect-conf.sh` でサーバーの設定を `conf/` に集めてコミットする。`script/deploy-check/paths.txt` には、比べるリクエストを書く。
+
+変更のたびに、次の順で実行する。
+
+```bash
+./deploy-check --before   # 変更の前の応答を保存する
+# コードや conf/ を変更する
+./deploy --dry-run        # 差分を確かめる
+./deploy                  # 反映する（複数台では、push してから ./deploy --server=isu1,isu2,isu3）
+./deploy-check --after    # 保存した応答と比べる。違えば差分を出して終了コード 1
+```
+
+ベンチの最中には、どちらも実行しない（アプリの再起動と `/initialize` でベンチが壊れる）。
+
 ## Claude のスキルとナレッジ
 
 | 場所 | 用途 |
