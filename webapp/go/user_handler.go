@@ -5,11 +5,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math/rand"
 	"net/http"
 	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 	"github.com/gorilla/sessions"
 	"github.com/jmoiron/sqlx"
@@ -24,6 +27,10 @@ const (
 	defaultUserIDKey         = "USERID"
 	defaultUsernameKey       = "USERNAME"
 	bcryptDefaultCost        = bcrypt.MinCost
+
+	// アイコン更新のトランザクションを、デッドロックのときに最初からやり直す回数の上限
+	iconUpdateMaxAttempts = 3
+	mysqlErrDeadlock      = 1213
 )
 
 var fallbackImage = "../img/NoImage.jpg"
@@ -164,28 +171,28 @@ func postIconHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "failed to decode the request body as json")
 	}
 
-	tx, err := dbConn.BeginTxx(ctx, nil)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to begin transaction: "+err.Error())
-	}
-	defer tx.Rollback()
+	var iconID int64
+	for attempt := 1; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "request canceled: "+err.Error())
+		}
 
-	if _, err := tx.ExecContext(ctx, "DELETE FROM icons WHERE user_id = ?", userID); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete old user icon: "+err.Error())
-	}
+		id, err := replaceUserIcon(ctx, userID, req.Image)
+		if err == nil {
+			iconID = id
+			break
+		}
+		if !isDeadlock(err) || attempt >= iconUpdateMaxAttempts {
+			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		}
+		c.Logger().Warnf("deadlock on icon update (user_id=%d, attempt=%d/%d), retrying", userID, attempt, iconUpdateMaxAttempts)
 
-	rs, err := tx.ExecContext(ctx, "INSERT INTO icons (user_id, image) VALUES (?, ?)", userID, req.Image)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to insert new user icon: "+err.Error())
-	}
-
-	iconID, err := rs.LastInsertId()
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get last inserted icon id: "+err.Error())
-	}
-
-	if err := tx.Commit(); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to commit: "+err.Error())
+		backoff := time.Duration(attempt)*10*time.Millisecond + time.Duration(rand.Int63n(int64(10*time.Millisecond)))
+		select {
+		case <-ctx.Done():
+			return echo.NewHTTPError(http.StatusInternalServerError, "request canceled: "+ctx.Err().Error())
+		case <-time.After(backoff):
+		}
 	}
 
 	setIconHash(userID, req.Image)
@@ -193,6 +200,47 @@ func postIconHandler(c echo.Context) error {
 	return c.JSON(http.StatusCreated, &PostIconResponse{
 		ID: iconID,
 	})
+}
+
+// replaceUserIcon はユーザーのアイコンを 1 つのトランザクションで差し替え、新しいアイコンの ID を返す。
+// READ COMMITTED にしてギャップロックを取らないようにし、異なるユーザーの同時登録が DELETE と INSERT で
+// 互いを待つデッドロックを防ぐ。同じユーザーの同時更新は users 行のロックで順番に並べる。
+func replaceUserIcon(ctx context.Context, userID int64, image []byte) (int64, error) {
+	tx, err := dbConn.BeginTxx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var lockedID int64
+	if err := tx.GetContext(ctx, &lockedID, "SELECT id FROM users WHERE id = ? FOR UPDATE", userID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("failed to lock user: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, "DELETE FROM icons WHERE user_id = ?", userID); err != nil {
+		return 0, fmt.Errorf("failed to delete old user icon: %w", err)
+	}
+
+	rs, err := tx.ExecContext(ctx, "INSERT INTO icons (user_id, image) VALUES (?, ?)", userID, image)
+	if err != nil {
+		return 0, fmt.Errorf("failed to insert new user icon: %w", err)
+	}
+
+	iconID, err := rs.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get last inserted icon id: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("failed to commit: %w", err)
+	}
+
+	return iconID, nil
+}
+
+func isDeadlock(err error) bool {
+	var mysqlErr *mysql.MySQLError
+	return errors.As(err, &mysqlErr) && mysqlErr.Number == mysqlErrDeadlock
 }
 
 func getMeHandler(c echo.Context) error {
