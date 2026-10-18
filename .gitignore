@@ -1,2 +1,8 @@
 # ./bench と ./deploy-check の結果
 results/
+
+# webapp の生成物（ビルドしたバイナリと依存のライブラリ）。go/isupipe は webapp/go/.gitignore で除外済み
+webapp/rust/target/
+webapp/node/node_modules/
+webapp/perl/local/
+webapp/php/vendor/
