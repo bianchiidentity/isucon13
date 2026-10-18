@@ -1,0 +1,17 @@
+# ISUCON の初期設定。apply.sh が mysql.conf.d（MariaDB なら mariadb.conf.d）に置く。
+# 同じ項目は後に読んだファイルが勝つ。mysqld.cnf より後に読ませるため、名前を zz- で始める。
+# 過去問の演習（private-isu、isucon12 予選）で採用し、サーバーの構成に依存しないものだけを入れた。
+[mysqld]
+# G1: 耐久性を捨てる。正常に再起動すればデータは残り、失うのはプロセスが落ちたときの最大 1 秒分だけ
+skip-log-bin
+innodb_flush_log_at_trx_commit = 0
+innodb_doublewrite = OFF
+
+# Go の database/sql は SetMaxOpenConns を設定しないと接続数に上限がなく、既定の 151 を超えると
+# Too many connections になる。使っていない接続はメモリをほぼ使わない
+max_connections = 1024
+
+# G0: 最初はボトルネックを探すので、全クエリを記録する。記録の負荷があるので、最終調整で OFF にする
+slow_query_log = ON
+slow_query_log_file = /var/log/mysql/mysql-slow.log
+long_query_time = 0
