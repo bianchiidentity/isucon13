@@ -130,16 +130,27 @@ run() {  # 応答を $1 のディレクトリに書く
   echo "$n 件のリクエストを比べる形で保存した"
 }
 
+# 保存した日時と、そのとき ./deploy が記録していた版（なければ日時だけ）
+saved_at() {
+  local d=/var/lib/isucon-deploy/deployed v
+  v="$(sudo -n cat "$d" 2> /dev/null | awk '$1 == "repo:" || $1 == "webapp:" { printf "%s %s%s、", ($1 == "repo:" ? "repo" : "webapp"), $3, ($4 == "dirty" ? " 未コミットあり" : "") }' || true)"
+  echo "$(date '+%Y-%m-%d %H:%M') に保存${v:+（${v%、}）}"
+}
+
 if [[ $MODE == before ]]; then
   run "$STORE/before"
   # after で同じ条件かを確かめるために、paths.txt と --no-init の有無を残す
   cp "$PATHS_FILE" "$STORE/before/.paths.txt"
   echo "no_init=$NO_INIT" > "$STORE/before/.conditions"
+  saved_at > "$STORE/before/.saved"
   log "保存した: $STORE/before"
+  cat "$STORE/before/.saved"
   exit 0
 fi
 
 [[ -d $STORE/before ]] || die "変更の前の応答がない。変更の前に ./deploy-check --before を実行する"
+# --before のし忘れで古い応答と比べていないかを、目で確かめられるようにする
+echo "比較の相手: $(cat "$STORE/before/.saved" 2> /dev/null || echo '保存した日時がわからない')"
 # 保存するファイル名は行の順番で付けているので、paths.txt が変わると別のリクエストどうしを比べてしまう
 cmp -s "$PATHS_FILE" "$STORE/before/.paths.txt" \
   || die "--before の後で paths.txt が変わった。変更の前の状態で ./deploy-check --before からやり直す"
