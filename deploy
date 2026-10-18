@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# デプロイの入口。使い方は ./deploy --help、詳しくは script/deploy/README.md
+exec "$(dirname "$0")/script/deploy/deploy.sh" "$@"
