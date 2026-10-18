@@ -43,6 +43,7 @@ func performanceDB(t *testing.T) *sqlx.DB {
 		for _, table := range tables {
 			db.MustExec("DELETE FROM " + table)
 		}
+		resetIconCache()
 	}
 	clean()
 	t.Cleanup(clean)

@@ -18,6 +18,7 @@ import (
 func TestSearchBatchResponse(t *testing.T) {
 	for _, missingIcon := range []bool{false, true} {
 		t.Run(fmt.Sprintf("fallback=%v", missingIcon), func(t *testing.T) {
+			resetIconCache()
 			db, mock, err := sqlmock.New()
 			if err != nil {
 				t.Fatal(err)
@@ -82,6 +83,7 @@ func TestSearchBatchEmpty(t *testing.T) {
 }
 
 func TestSearchBatchMissingOwner(t *testing.T) {
+	resetIconCache()
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)

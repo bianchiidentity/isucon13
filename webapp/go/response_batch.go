@@ -2,10 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"fmt"
-	"os"
 
 	"github.com/jmoiron/sqlx"
 )
@@ -47,11 +44,8 @@ func fillUsersByIDs(ctx context.Context, tx *sqlx.Tx, userIDs []int64) (map[int6
 	if err := selectResponseIDs(ctx, tx, &themes, "SELECT * FROM themes WHERE user_id IN (?) ORDER BY id", userIDs); err != nil {
 		return nil, err
 	}
-	var icons []struct {
-		UserID int64  `db:"user_id"`
-		Image  []byte `db:"image"`
-	}
-	if err := selectResponseIDs(ctx, tx, &icons, "SELECT user_id, image FROM icons WHERE user_id IN (?) ORDER BY id", userIDs); err != nil {
+	iconHashes, err := getIconHashes(ctx, tx, userIDs)
+	if err != nil {
 		return nil, err
 	}
 	themesByUser := map[int64]ThemeModel{}
@@ -60,35 +54,14 @@ func fillUsersByIDs(ctx context.Context, tx *sqlx.Tx, userIDs []int64) (map[int6
 			themesByUser[theme.UserID] = theme
 		}
 	}
-	images := map[int64][]byte{}
-	for _, icon := range icons {
-		if _, ok := images[icon.UserID]; !ok {
-			images[icon.UserID] = icon.Image
-		}
-	}
 	owners := map[int64]User{}
-	var fallback []byte
-	fallbackLoaded := false
 	for _, user := range users {
 		theme, ok := themesByUser[user.ID]
 		if !ok {
 			return nil, sql.ErrNoRows
 		}
-		image, ok := images[user.ID]
-		if !ok {
-			if !fallbackLoaded {
-				var err error
-				fallback, err = os.ReadFile(fallbackImage)
-				if err != nil {
-					return nil, err
-				}
-				fallbackLoaded = true
-			}
-			image = fallback
-		}
-		hash := sha256.Sum256(image)
 		owners[user.ID] = User{ID: user.ID, Name: user.Name, DisplayName: user.DisplayName, Description: user.Description,
-			Theme: Theme{ID: theme.ID, DarkMode: theme.DarkMode}, IconHash: fmt.Sprintf("%x", hash)}
+			Theme: Theme{ID: theme.ID, DarkMode: theme.DarkMode}, IconHash: iconHashes[user.ID]}
 	}
 	for _, id := range userIDs {
 		if _, ok := owners[id]; !ok {
