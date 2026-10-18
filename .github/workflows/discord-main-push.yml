@@ -1,0 +1,73 @@
+# Settings > Secrets and variables > Actions に DISCORD_WEBHOOK_URL を登録する。
+# main への push（PR のマージを含む）を通知する。デプロイ完了の通知ではない。
+name: Notify Discord of main push
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Send Discord notification
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          url = os.environ.get("DISCORD_WEBHOOK_URL", "")
+          if not url:
+              print("::notice::Set the DISCORD_WEBHOOK_URL Actions secret to enable notifications.")
+              raise SystemExit(0)
+
+          with open(os.environ["GITHUB_EVENT_PATH"]) as f:
+              event = json.load(f)
+          repo = os.environ["GITHUB_REPOSITORY"]
+          actor = os.environ["GITHUB_ACTOR"]
+          sha = os.environ["GITHUB_SHA"]
+          server = os.environ["GITHUB_SERVER_URL"]
+          manual = os.environ["GITHUB_EVENT_NAME"] == "workflow_dispatch"
+          if event.get("deleted"):
+              raise SystemExit(0)
+          title = "🔔 Discord 通知テスト" if manual else "📦 main に push されました"
+          lines = [title, f"リポジトリ：{repo}", f"実行者：{actor}"]
+          commits = event.get("commits", [])
+          for commit in commits[-5:]:
+              subject = commit.get("message", "").splitlines()
+              subject = subject[0][:150] if subject else "(no message)"
+              lines.append(f"• {commit['id'][:7]} {subject}")
+          if len(commits) > 5:
+              lines.append(f"ほか {len(commits) - 5} 件（リンク先を参照）")
+          link = event.get("compare") or f"{server}/{repo}/commit/{sha}"
+          lines.append(link)
+          payload = {"content": "\n".join(lines)[:2000], "allowed_mentions": {"parse": []}}
+          parsed = urllib.parse.urlsplit(url)
+          query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+          query = [(k, v) for k, v in query if k != "wait"] + [("wait", "true")]
+          url = urllib.parse.urlunsplit(parsed._replace(query=urllib.parse.urlencode(query)))
+          request = urllib.request.Request(
+              url, data=json.dumps(payload, ensure_ascii=False).encode(),
+              headers={"Content-Type": "application/json", "User-Agent": "isucon-discord-notifier"},
+          )
+          try:
+              with urllib.request.urlopen(request, timeout=15) as response:
+                  response.read()
+          except urllib.error.HTTPError as error:
+              print(f"::error::Discord notification failed (HTTP {error.code}).")
+              raise SystemExit(1) from None
+          except (urllib.error.URLError, TimeoutError):
+              print("::error::Discord notification failed (connection error or timeout).")
+              raise SystemExit(1) from None
+          print("Discord notification sent.")
+          PY
