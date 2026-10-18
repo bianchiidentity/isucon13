@@ -6,6 +6,10 @@
 - [当日マニュアル](https://github.com/isucon/isucon13/blob/main/docs/cautionary_note.md)
 - [アプリケーションマニュアル（ISUPipe）](https://github.com/isucon/isucon13/blob/main/docs/isupipe.md)
 
+## チームの文書
+
+- [サイトの全体像](docs/overview.md): 採点と制約、ジャーニー、エンドポイント、構成、ER 図、共通処理、通信の流れ
+
 ## スクリプト
 
 | 入口 | 用途 |
