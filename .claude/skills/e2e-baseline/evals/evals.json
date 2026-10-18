@@ -1,0 +1,17 @@
+{
+  "skill_name": "e2e-baseline",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "ISUCON12予選のリポジトリ /home/charines/project/isucon12-qualify で競技を始めるところです。アプリは別サーバで動いていて https://isucon.t.isucon.local/ （テナント isucon）と https://admin.t.isucon.local/ （管理画面）でアクセスできます。これからの高速化でフロントが壊れていないか確かめられるように、初期状態の全ページの E2E テストとスクショを作ってください。",
+      "expected_output": "e2e/ に Playwright プロジェクト。admin・player・organizer の主要ページを網羅し、初期データ由来の安定した値をアサーションし、全テストが通り、各ページのスクショが保存されている。状態を変える操作はしない。",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "isucon12-qualify (/home/charines/project/isucon12-qualify) の player 向け画面だけでいいので、回帰チェック用の E2E とスクショをさっと用意して。テナントは https://isucon.t.isucon.local/ 。ベンチを何回か回した後でも誤検知しないようにしたい。",
+      "expected_output": "player 向けの LP・マイページ・大会詳細・プレイヤー詳細のテスト。ベンチで変わる値（未終了大会、合計、一覧先頭）をアサーションに使わない。全テストが通る。",
+      "files": []
+    }
+  ]
+}
