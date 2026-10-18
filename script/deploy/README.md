@@ -24,6 +24,24 @@
 
 ## 実行する前に
 
+### アイコン検索の索引を反映する（Issue #17）
+
+`icons(user_id)` はリポジトリ内の `webapp/sql/initdb.d/10_schema.sql` に定義している。
+サーバーでコードを更新した後、通常の `./deploy` で MySQL の段が差分を適用する。
+索引だけを反映するときは次を実行する（MySQL の役割を持つサーバーで実行）。
+
+```bash
+./deploy --only=mysql --dry-run
+./deploy --only=mysql
+```
+
+`mysqldef` が表示する差分で `icons_user_id` の追加を確認する。既存 DB に他の差分が
+ある場合は、それも表示・適用の対象になる。意図しない DROP があれば既定で停止する。
+反映済みなら再実行時に同じ索引を追加しない。初期化は TRUNCATE のため索引を保持し、
+DB を新規作成する場合もスキーマ定義から作成される。
+確認には `SHOW INDEX FROM isupipe.icons;` と
+`EXPLAIN SELECT image FROM isupipe.icons WHERE user_id = 1;` を使う。
+
 ### 必要な条件
 
 - 実行するユーザー（リポジトリの持ち主。普通は isucon）が、パスワードなしで sudo できる。
