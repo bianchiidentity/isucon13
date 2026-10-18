@@ -2,14 +2,13 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -113,12 +112,8 @@ func reserveLivestreamHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get reservation_slots: "+err.Error())
 	}
 	for _, slot := range slots {
-		var count int
-		if err := tx.GetContext(ctx, &count, "SELECT slot FROM reservation_slots WHERE start_at = ? AND end_at = ?", slot.StartAt, slot.EndAt); err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get reservation_slots: "+err.Error())
-		}
 		c.Logger().Infof("%d ~ %d予約枠の残数 = %d\n", slot.StartAt, slot.EndAt, slot.Slot)
-		if count < 1 {
+		if slot.Slot < 1 {
 			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("予約期間 %d ~ %dに対して、予約区間 %d ~ %dが予約できません", termStartAt.Unix(), termEndAt.Unix(), req.StartAt, req.EndAt))
 		}
 	}
@@ -150,12 +145,15 @@ func reserveLivestreamHandler(c echo.Context) error {
 	}
 	livestreamModel.ID = livestreamID
 
-	// タグ追加
-	for _, tagID := range req.Tags {
-		if _, err := tx.NamedExecContext(ctx, "INSERT INTO livestream_tags (livestream_id, tag_id) VALUES (:livestream_id, :tag_id)", &LivestreamTagModel{
-			LivestreamID: livestreamID,
-			TagID:        tagID,
-		}); err != nil {
+	// タグの重複と入力順を保ったまま一度で追加する。
+	if len(req.Tags) > 0 {
+		values := make([]string, len(req.Tags))
+		args := make([]interface{}, 0, len(req.Tags)*2)
+		for i, tagID := range req.Tags {
+			values[i] = "(?, ?)"
+			args = append(args, livestreamID, tagID)
+		}
+		if _, err := tx.ExecContext(ctx, "INSERT INTO livestream_tags (livestream_id, tag_id) VALUES "+strings.Join(values, ","), args...); err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, "failed to insert livestream tag: "+err.Error())
 		}
 	}
@@ -241,7 +239,7 @@ func searchLivestreamsHandler(c echo.Context) error {
 		}
 	}
 
-	livestreams, err := fillSearchLivestreamResponses(ctx, tx, livestreamModels)
+	livestreams, err := fillLivestreamResponses(ctx, tx, livestreamModels)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill livestream: "+err.Error())
 	}
@@ -274,13 +272,9 @@ func getMyLivestreamsHandler(c echo.Context) error {
 	if err := tx.SelectContext(ctx, &livestreamModels, "SELECT * FROM livestreams WHERE user_id = ?", userID); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestreams: "+err.Error())
 	}
-	livestreams := make([]Livestream, len(livestreamModels))
-	for i := range livestreamModels {
-		livestream, err := fillLivestreamResponse(ctx, tx, *livestreamModels[i])
-		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill livestream: "+err.Error())
-		}
-		livestreams[i] = livestream
+	livestreams, err := fillLivestreamResponses(ctx, tx, livestreamModels)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill livestream: "+err.Error())
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -317,13 +311,9 @@ func getUserLivestreamsHandler(c echo.Context) error {
 	if err := tx.SelectContext(ctx, &livestreamModels, "SELECT * FROM livestreams WHERE user_id = ?", user.ID); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livestreams: "+err.Error())
 	}
-	livestreams := make([]Livestream, len(livestreamModels))
-	for i := range livestreamModels {
-		livestream, err := fillLivestreamResponse(ctx, tx, *livestreamModels[i])
-		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill livestream: "+err.Error())
-		}
-		livestreams[i] = livestream
+	livestreams, err := fillLivestreamResponses(ctx, tx, livestreamModels)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill livestream: "+err.Error())
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -484,13 +474,9 @@ func getLivecommentReportsHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livecomment reports: "+err.Error())
 	}
 
-	reports := make([]LivecommentReport, len(reportModels))
-	for i := range reportModels {
-		report, err := fillLivecommentReportResponse(ctx, tx, *reportModels[i])
-		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill livecomment report: "+err.Error())
-		}
-		reports[i] = report
+	reports, err := fillReportResponses(ctx, tx, reportModels)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fill report: "+err.Error())
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -500,166 +486,10 @@ func getLivecommentReportsHandler(c echo.Context) error {
 	return c.JSON(http.StatusOK, reports)
 }
 
-func fillLivestreamResponse(ctx context.Context, tx *sqlx.Tx, livestreamModel LivestreamModel) (Livestream, error) {
-	ownerModel := UserModel{}
-	if err := tx.GetContext(ctx, &ownerModel, "SELECT * FROM users WHERE id = ?", livestreamModel.UserID); err != nil {
-		return Livestream{}, err
-	}
-	owner, err := fillUserResponse(ctx, tx, ownerModel)
+func fillLivestreamResponse(ctx context.Context, tx *sqlx.Tx, model LivestreamModel) (Livestream, error) {
+	result, err := fillLivestreamResponses(ctx, tx, []*LivestreamModel{&model})
 	if err != nil {
 		return Livestream{}, err
 	}
-
-	var livestreamTagModels []*LivestreamTagModel
-	if err := tx.SelectContext(ctx, &livestreamTagModels, "SELECT * FROM livestream_tags WHERE livestream_id = ?", livestreamModel.ID); err != nil {
-		return Livestream{}, err
-	}
-
-	tags := make([]Tag, len(livestreamTagModels))
-	for i := range livestreamTagModels {
-		tagModel := TagModel{}
-		if err := tx.GetContext(ctx, &tagModel, "SELECT * FROM tags WHERE id = ?", livestreamTagModels[i].TagID); err != nil {
-			return Livestream{}, err
-		}
-
-		tags[i] = Tag{
-			ID:   tagModel.ID,
-			Name: tagModel.Name,
-		}
-	}
-
-	livestream := Livestream{
-		ID:           livestreamModel.ID,
-		Owner:        owner,
-		Title:        livestreamModel.Title,
-		Tags:         tags,
-		Description:  livestreamModel.Description,
-		PlaylistUrl:  livestreamModel.PlaylistUrl,
-		ThumbnailUrl: livestreamModel.ThumbnailUrl,
-		StartAt:      livestreamModel.StartAt,
-		EndAt:        livestreamModel.EndAt,
-	}
-	return livestream, nil
-}
-
-// 検索リクエスト内でだけ使う一括取得。同じトランザクションの読み取りを保つ。
-func fillSearchLivestreamResponses(ctx context.Context, tx *sqlx.Tx, models []*LivestreamModel) ([]Livestream, error) {
-	result := make([]Livestream, len(models))
-	if len(models) == 0 {
-		return result, nil
-	}
-	userIDs, streamIDs := []int64{}, []int64{}
-	seenUsers, seenStreams := map[int64]bool{}, map[int64]bool{}
-	for _, model := range models {
-		if !seenUsers[model.UserID] {
-			userIDs = append(userIDs, model.UserID)
-			seenUsers[model.UserID] = true
-		}
-		if !seenStreams[model.ID] {
-			streamIDs = append(streamIDs, model.ID)
-			seenStreams[model.ID] = true
-		}
-	}
-	selectIDs := func(dest interface{}, query string, ids []int64) error {
-		query, args, err := sqlx.In(query, ids)
-		if err != nil {
-			return err
-		}
-		return tx.SelectContext(ctx, dest, query, args...)
-	}
-	var users []UserModel
-	if err := selectIDs(&users, "SELECT * FROM users WHERE id IN (?)", userIDs); err != nil {
-		return nil, err
-	}
-	var themes []ThemeModel
-	if err := selectIDs(&themes, "SELECT * FROM themes WHERE user_id IN (?) ORDER BY id", userIDs); err != nil {
-		return nil, err
-	}
-	var icons []struct {
-		UserID int64  `db:"user_id"`
-		Image  []byte `db:"image"`
-	}
-	if err := selectIDs(&icons, "SELECT user_id, image FROM icons WHERE user_id IN (?) ORDER BY id", userIDs); err != nil {
-		return nil, err
-	}
-	themesByUser := map[int64]ThemeModel{}
-	for _, theme := range themes {
-		if _, ok := themesByUser[theme.UserID]; !ok {
-			themesByUser[theme.UserID] = theme
-		}
-	}
-	images := map[int64][]byte{}
-	for _, icon := range icons {
-		if _, ok := images[icon.UserID]; !ok {
-			images[icon.UserID] = icon.Image
-		}
-	}
-	owners := map[int64]User{}
-	var fallback []byte
-	fallbackLoaded := false
-	for _, user := range users {
-		theme, ok := themesByUser[user.ID]
-		if !ok {
-			return nil, sql.ErrNoRows
-		}
-		image, ok := images[user.ID]
-		if !ok {
-			if !fallbackLoaded {
-				var err error
-				fallback, err = os.ReadFile(fallbackImage)
-				if err != nil {
-					return nil, err
-				}
-				fallbackLoaded = true
-			}
-			image = fallback
-		}
-		hash := sha256.Sum256(image)
-		owners[user.ID] = User{ID: user.ID, Name: user.Name, DisplayName: user.DisplayName, Description: user.Description,
-			Theme: Theme{ID: theme.ID, DarkMode: theme.DarkMode}, IconHash: fmt.Sprintf("%x", hash)}
-	}
-	var links []LivestreamTagModel
-	// 既存の livestream_id 索引による取得順（同一配信内は主キー順）を維持する。
-	if err := selectIDs(&links, "SELECT * FROM livestream_tags WHERE livestream_id IN (?) ORDER BY livestream_id, id", streamIDs); err != nil {
-		return nil, err
-	}
-	tagIDs := []int64{}
-	seenTags := map[int64]bool{}
-	for _, link := range links {
-		if !seenTags[link.TagID] {
-			tagIDs = append(tagIDs, link.TagID)
-			seenTags[link.TagID] = true
-		}
-	}
-	tagsByID := map[int64]Tag{}
-	if len(tagIDs) > 0 {
-		var tags []TagModel
-		if err := selectIDs(&tags, "SELECT * FROM tags WHERE id IN (?)", tagIDs); err != nil {
-			return nil, err
-		}
-		for _, tag := range tags {
-			tagsByID[tag.ID] = Tag{ID: tag.ID, Name: tag.Name}
-		}
-	}
-	streamTags := map[int64][]Tag{}
-	for _, link := range links {
-		tag, ok := tagsByID[link.TagID]
-		if !ok {
-			return nil, sql.ErrNoRows
-		}
-		streamTags[link.LivestreamID] = append(streamTags[link.LivestreamID], tag)
-	}
-	for i, model := range models {
-		owner, ok := owners[model.UserID]
-		if !ok {
-			return nil, sql.ErrNoRows
-		}
-		tags := streamTags[model.ID]
-		if tags == nil {
-			tags = []Tag{}
-		}
-		result[i] = Livestream{ID: model.ID, Owner: owner, Title: model.Title, Description: model.Description,
-			PlaylistUrl: model.PlaylistUrl, ThumbnailUrl: model.ThumbnailUrl, Tags: tags, StartAt: model.StartAt, EndAt: model.EndAt}
-	}
-	return result, nil
+	return result[0], nil
 }

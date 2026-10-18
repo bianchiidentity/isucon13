@@ -159,3 +159,29 @@ pprotein の Snapshot の Git 情報だけで稼働版を判断せず、この�
 初回は `./deploy-check --version` が記録なしで失敗するため app 段を実行する。
 `--dry-run` はビルド・drop-in 作成・再起動を行わない。
 元の unit の起動先へ戻す場合は、この drop-in を削除して daemon-reload・再起動する。
+
+## 一覧の N+1 と検索索引の反映
+
+`perf/develop-batch-and-indexes` の変更では、配信検索・配信者別一覧・コメント・
+リアクション・報告のレスポンスを同じトランザクション内で一括取得する。
+統計のコメント数・チップ・視聴履歴も配信ごとの取得をやめて集計し、予約枠の
+ロック後の再 SELECT と、タグごとの INSERT をまとめる。
+NG 語判定は MySQL のパラメータ同士の LIKE を維持し、128件ごとの組合せで判定する。
+
+スキーマには配信者別一覧、タグ別検索、コメント／リアクションの配信別時刻順、
+視聴履歴、報告、配信別 NG 語、予約枠の開始／終了時刻の非ユニーク索引を追加している。
+コード更新後、通常の `./deploy` でスキーマとアプリの両方を反映する。
+`./deploy --only=mysql --dry-run` で DDL を確認できる。DDL・アプリ再起動はベンチ外で行う。
+
+Go の通常テストは `cd webapp/go && go test ./...`。
+MySQL での旧実装比較・SQL回数・NG語・同時予約・EXPLAINの確認には、使い捨ての
+`_perf_test` で終わる名前の DB を作り、`10_schema.sql` の USE をその DB 名へ
+置き換えて読み込んでから、次のように実行する。
+
+```bash
+cd webapp/go
+ISUCON_PERF_TEST_DSN='user:password@tcp(127.0.0.1:3306)/isupipe_perf_test?parseTime=true' go test -v ./...
+```
+
+統合テストはこの専用 DB のデータを削除・作成する。本番 DB には向けない。
+環境変数が未指定なら MySQL 統合テストはスキップされる。

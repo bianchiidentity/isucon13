@@ -44,7 +44,7 @@ func TestSearchBatchResponse(t *testing.T) {
 			mock.ExpectQuery("SELECT \\* FROM livestream_tags WHERE livestream_id IN").WithArgs(int64(20), int64(10)).WillReturnRows(sqlmock.NewRows([]string{"id", "livestream_id", "tag_id"}).AddRow(2, 20, 9).AddRow(3, 20, 8).AddRow(4, 20, 9))
 			mock.ExpectQuery("SELECT \\* FROM tags WHERE id IN").WithArgs(int64(9), int64(8)).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).AddRow(8, "eight").AddRow(9, "nine"))
 			first := &LivestreamModel{ID: 20, UserID: 7, Title: "title", Description: "description", PlaylistUrl: "playlist", ThumbnailUrl: "thumbnail", StartAt: 100, EndAt: 200}
-			got, err := fillSearchLivestreamResponses(context.Background(), tx, []*LivestreamModel{first, {ID: 10, UserID: 7}, first})
+			got, err := fillLivestreamResponses(context.Background(), tx, []*LivestreamModel{first, {ID: 10, UserID: 7}, first})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -71,7 +71,7 @@ func TestSearchBatchResponse(t *testing.T) {
 }
 
 func TestSearchBatchEmpty(t *testing.T) {
-	got, err := fillSearchLivestreamResponses(context.Background(), nil, nil)
+	got, err := fillLivestreamResponses(context.Background(), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,8 +95,7 @@ func TestSearchBatchMissingOwner(t *testing.T) {
 	mock.ExpectQuery("SELECT \\* FROM users").WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectQuery("SELECT \\* FROM themes").WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "dark_mode"}))
 	mock.ExpectQuery("SELECT user_id, image FROM icons").WillReturnRows(sqlmock.NewRows([]string{"user_id", "image"}))
-	mock.ExpectQuery("SELECT \\* FROM livestream_tags").WillReturnRows(sqlmock.NewRows([]string{"id", "livestream_id", "tag_id"}))
-	_, err = fillSearchLivestreamResponses(context.Background(), tx, []*LivestreamModel{{ID: 1, UserID: 7}})
+	_, err = fillLivestreamResponses(context.Background(), tx, []*LivestreamModel{{ID: 1, UserID: 7}})
 	if err != sql.ErrNoRows {
 		t.Fatalf("got %v", err)
 	}
