@@ -15,6 +15,7 @@
 | 入口 | 用途 |
 |---|---|
 | [`script/base-conf/apply.sh`](script/base-conf/README.md) | 競技の開始直後に入れる設定（自動アップデートの停止、計測ツール、nginx と MySQL の設定） |
+| [`script/setup-tools/setup-tools.sh`](script/setup-tools/README.md) | base-conf の後に入れるツール（graphviz、sysstat、版を固定した mysqldef） |
 | [`./deploy`](script/deploy/README.md) | リポジトリのコードと設定をサーバーに反映する |
 | [`./deploy-check`](script/deploy-check/README.md) | 変更の前後で応答が変わっていないかを確かめる |
 
