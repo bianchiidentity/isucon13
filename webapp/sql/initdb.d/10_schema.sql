@@ -37,6 +37,7 @@ CREATE TABLE `livestreams` (
   `start_at` BIGINT NOT NULL,
   `end_at` BIGINT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE INDEX livestreams_user_id ON livestreams(`user_id`);
 
 -- ライブ配信予約枠
 CREATE TABLE `reservation_slots` (
@@ -45,6 +46,7 @@ CREATE TABLE `reservation_slots` (
   `start_at` BIGINT NOT NULL,
   `end_at` BIGINT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE INDEX reservation_slots_start_end ON reservation_slots(`start_at`, `end_at`);
 CREATE INDEX reservation_slots_end_start ON reservation_slots(`end_at`, `start_at`);
 
 -- ライブストリームに付与される、サービスで定義されたタグ
@@ -60,6 +62,7 @@ CREATE TABLE `livestream_tags` (
   `livestream_id` BIGINT NOT NULL,
   `tag_id` BIGINT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE INDEX livestream_tags_tag_livestream ON livestream_tags(`tag_id`, `livestream_id`);
 CREATE INDEX livestream_tags_livestream_id ON livestream_tags(`livestream_id`);
 
 -- ライブ配信視聴履歴
@@ -69,6 +72,7 @@ CREATE TABLE `livestream_viewers_history` (
   `livestream_id` BIGINT NOT NULL,
   `created_at` BIGINT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE INDEX viewers_livestream_user ON livestream_viewers_history(`livestream_id`, `user_id`);
 
 -- ライブ配信に対するライブコメント
 CREATE TABLE `livecomments` (
@@ -79,6 +83,7 @@ CREATE TABLE `livecomments` (
   `tip` BIGINT NOT NULL DEFAULT 0,
   `created_at` BIGINT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE INDEX livecomments_livestream_created ON livecomments(`livestream_id`, `created_at` DESC);
 
 -- ユーザからのライブコメントのスパム報告
 CREATE TABLE `livecomment_reports` (
@@ -88,6 +93,7 @@ CREATE TABLE `livecomment_reports` (
   `livecomment_id` BIGINT NOT NULL,
   `created_at` BIGINT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE INDEX reports_livestream ON livecomment_reports(`livestream_id`);
 
 -- 配信者からのNGワード登録
 CREATE TABLE `ng_words` (
@@ -97,7 +103,9 @@ CREATE TABLE `ng_words` (
   `word` VARCHAR(255) NOT NULL,
   `created_at` BIGINT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE INDEX ng_words_livestream ON ng_words(`livestream_id`);
 CREATE INDEX ng_words_word ON ng_words(`word`);
+CREATE INDEX ng_words_user_livestream ON ng_words(`user_id`, `livestream_id`);
 
 -- ライブ配信に対するリアクション
 CREATE TABLE `reactions` (
@@ -108,3 +116,4 @@ CREATE TABLE `reactions` (
   `emoji_name` VARCHAR(255) NOT NULL,
   `created_at` BIGINT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE INDEX reactions_livestream_created ON reactions(`livestream_id`, `created_at` DESC);

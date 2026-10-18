@@ -99,7 +99,7 @@ script/deploy/
 
 ## webapp をリポジトリに入れる
 
-前半（1 台）は、webapp が別の git（`/home/isucon/webapp`）のままでも動く。後半の `--server` では、webapp のコードもリポジトリに入っている必要がある（入っていないと、他のサーバーにコードが届かない）。後半に入る前、できれば当日の最初に、次の手順で入れる。リポジトリは isucon ユーザーで、`/home/isucon` の下に clone しておく（ubuntu のホームに置くと、持ち主と sudo の扱いがずれる）。
+deploy はリポジトリ内の `webapp/go` をビルド・実行する。webapp が別の git（`/home/isucon/webapp`）にある場合は、先にリポジトリへ取り込む。後半に入る前、できれば当日の最初に、次の手順で入れる。リポジトリは isucon ユーザーで、`/home/isucon` の下に clone しておく（ubuntu のホームに置くと、持ち主と sudo の扱いがずれる）。
 
 1 台目（isucon ユーザーで）:
 
@@ -132,3 +132,56 @@ sudo systemctl start <APP_SERVICE>
 - ビルドしたバイナリは `.gitignore` に入れる。commit すると、他のサーバーで git の取り込みが止まる。
 - schema.sql に初期データの INSERT が混ざっている問題では、CREATE 文だけのファイルに分けて `SCHEMA_FILE` にする。大きいテーブルの ALTER は、`/initialize` のタイムアウトに注意する。
 - `--only=mysql` で MySQL を再起動しても、アプリは再起動しない。アプリが MySQL のソケットをコンテナにマウントしている問題では、アプリも再起動する。
+
+## ソースと実行バイナリの確認（Issue #29）
+
+`APP_DIR` は `$REPO_DIR/webapp/go`。別ディレクトリの古いソースをビルドしない。
+app 段では `go build -buildvcs=true` のコミット情報を HEAD と比較し、Go ソースと
+依存定義のハッシュを `/var/lib/isucon-deploy/app-source-sha256` に保存する。
+ローカル作業ツリーの変更も反映でき、未コミットの有無はビルド情報に記録する。
+
+systemd の `/etc/systemd/system/isupipe-go.service.d/zz-isucon-deploy.conf` で
+WorkingDirectory と ExecStart をリポジトリ内へ向け、daemon-reload 後に再起動する。
+EnvironmentFile など既存 unit の設定は引き継ぐ。相対パスの初期化 SQL・画像・DNS の
+ゾーンもリポジトリ内のものを使用する。ビルド失敗・版不一致なら再起動前に停止する。
+再起動後は MainPID の `/proc/<PID>/exe` とビルド成果物の SHA256 を比較する。
+
+```bash
+./deploy --only=app
+./deploy-check --version
+```
+
+`--version` は初期化・HTTP リクエスト・再起動を行わず、HEAD とビルド版、ビルド後の
+ソース変更、実行中バイナリとの一致を検証する。Go と systemd・procfs のあるサーバーで
+実行する。app を反映した deploy 記録にはバイナリパス・PID・SHA256・Go ビルド情報を残す。
+pprotein の Snapshot の Git 情報だけで稼働版を判断せず、この記録と照合する。
+
+初回は `./deploy-check --version` が記録なしで失敗するため app 段を実行する。
+`--dry-run` はビルド・drop-in 作成・再起動を行わない。
+元の unit の起動先へ戻す場合は、この drop-in を削除して daemon-reload・再起動する。
+
+## 一覧の N+1 と検索索引の反映
+
+`perf/develop-batch-and-indexes` の変更では、配信検索・配信者別一覧・コメント・
+リアクション・報告のレスポンスを同じトランザクション内で一括取得する。
+統計のコメント数・チップ・視聴履歴も配信ごとの取得をやめて集計し、予約枠の
+ロック後の再 SELECT と、タグごとの INSERT をまとめる。
+NG 語判定は MySQL のパラメータ同士の LIKE を維持し、128件ごとの組合せで判定する。
+
+スキーマには配信者別一覧、タグ別検索、コメント／リアクションの配信別時刻順、
+視聴履歴、報告、配信別 NG 語、予約枠の開始／終了時刻の非ユニーク索引を追加している。
+コード更新後、通常の `./deploy` でスキーマとアプリの両方を反映する。
+`./deploy --only=mysql --dry-run` で DDL を確認できる。DDL・アプリ再起動はベンチ外で行う。
+
+Go の通常テストは `cd webapp/go && go test ./...`。
+MySQL での旧実装比較・SQL回数・NG語・同時予約・EXPLAINの確認には、使い捨ての
+`_perf_test` で終わる名前の DB を作り、`10_schema.sql` の USE をその DB 名へ
+置き換えて読み込んでから、次のように実行する。
+
+```bash
+cd webapp/go
+ISUCON_PERF_TEST_DSN='user:password@tcp(127.0.0.1:3306)/isupipe_perf_test?parseTime=true' go test -v ./...
+```
+
+統合テストはこの専用 DB のデータを削除・作成する。本番 DB には向けない。
+環境変数が未指定なら MySQL 統合テストはスキップされる。

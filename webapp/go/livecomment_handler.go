@@ -102,27 +102,9 @@ func getLivecommentsHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livecomments: "+err.Error())
 	}
 
-	// 全コメントが同じ配信に属するため、配信情報は一度だけ組み立てて使い回す
-	var livestream Livestream
-	if len(livecommentModels) > 0 {
-		livestreamModel := LivestreamModel{}
-		if err := tx.GetContext(ctx, &livestreamModel, "SELECT * FROM livestreams WHERE id = ?", livecommentModels[0].LivestreamID); err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to fil livecomments: "+err.Error())
-		}
-		livestream, err = fillLivestreamResponse(ctx, tx, livestreamModel)
-		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to fil livecomments: "+err.Error())
-		}
-	}
-
-	livecomments := make([]Livecomment, len(livecommentModels))
-	for i := range livecommentModels {
-		livecomment, err := fillLivecommentResponseWithLivestream(ctx, tx, livecommentModels[i], livestream)
-		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to fil livecomments: "+err.Error())
-		}
-
-		livecomments[i] = livecomment
+	livecomments, err := fillLivecommentResponses(ctx, tx, livecommentModels)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to fil livecomments: "+err.Error())
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -215,23 +197,12 @@ func postLivecommentHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get NG words: "+err.Error())
 	}
 
-	var hitSpam int
-	for _, ngword := range ngwords {
-		query := `
-		SELECT COUNT(*)
-		FROM
-		(SELECT ? AS text) AS texts
-		INNER JOIN
-		(SELECT CONCAT('%', ?, '%')	AS pattern) AS patterns
-		ON texts.text LIKE patterns.pattern;
-		`
-		if err := tx.GetContext(ctx, &hitSpam, query, req.Comment, ngword.Word); err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get hitspam: "+err.Error())
-		}
-		c.Logger().Infof("[hitSpam=%d] comment = %s", hitSpam, req.Comment)
-		if hitSpam >= 1 {
-			return echo.NewHTTPError(http.StatusBadRequest, "このコメントがスパム判定されました")
-		}
+	spamIDs, err := matchingCommentIDs(ctx, tx, []LivecommentModel{{ID: 0, Comment: req.Comment}}, ngwords)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get hitspam: "+err.Error())
+	}
+	if len(spamIDs) > 0 {
+		return echo.NewHTTPError(http.StatusBadRequest, "このコメントがスパム判定されました")
 	}
 
 	now := time.Now().Unix()
@@ -399,31 +370,9 @@ func moderateHandler(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get NG words: "+err.Error())
 	}
 
-	// NGワードにヒットする過去の投稿も全削除する
-	for _, ngword := range ngwords {
-		// ライブコメント一覧取得
-		var livecomments []*LivecommentModel
-		if err := tx.SelectContext(ctx, &livecomments, "SELECT * FROM livecomments"); err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get livecomments: "+err.Error())
-		}
-
-		for _, livecomment := range livecomments {
-			query := `
-			DELETE FROM livecomments
-			WHERE
-			id = ? AND
-			livestream_id = ? AND
-			(SELECT COUNT(*)
-			FROM
-			(SELECT ? AS text) AS texts
-			INNER JOIN
-			(SELECT CONCAT('%', ?, '%')	AS pattern) AS patterns
-			ON texts.text LIKE patterns.pattern) >= 1;
-			`
-			if _, err := tx.ExecContext(ctx, query, livecomment.ID, livestreamID, livecomment.Comment, ngword.Word); err != nil {
-				return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete old livecomments that hit spams: "+err.Error())
-			}
-		}
+	// 対象配信のスナップショットを一度だけ読み、同じ LIKE 判定で一致する ID をまとめて削除する。
+	if err := deleteMatchingComments(ctx, tx, livestreamID, ngwords); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete old livecomments that hit spams: "+err.Error())
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -464,27 +413,6 @@ func fillLivecommentResponse(ctx context.Context, tx *sqlx.Tx, livecommentModel 
 	}
 
 	return livecomment, nil
-}
-
-// fillLivecommentResponseWithLivestream は組み立て済みの配信情報を埋め込んで、コメントのレスポンスを作る
-func fillLivecommentResponseWithLivestream(ctx context.Context, tx *sqlx.Tx, livecommentModel LivecommentModel, livestream Livestream) (Livecomment, error) {
-	commentOwnerModel := UserModel{}
-	if err := tx.GetContext(ctx, &commentOwnerModel, "SELECT * FROM users WHERE id = ?", livecommentModel.UserID); err != nil {
-		return Livecomment{}, err
-	}
-	commentOwner, err := fillUserResponse(ctx, tx, commentOwnerModel)
-	if err != nil {
-		return Livecomment{}, err
-	}
-
-	return Livecomment{
-		ID:         livecommentModel.ID,
-		User:       commentOwner,
-		Livestream: livestream,
-		Comment:    livecommentModel.Comment,
-		Tip:        livecommentModel.Tip,
-		CreatedAt:  livecommentModel.CreatedAt,
-	}, nil
 }
 
 func fillLivecommentReportResponse(ctx context.Context, tx *sqlx.Tx, reportModel LivecommentReportModel) (LivecommentReport, error) {
