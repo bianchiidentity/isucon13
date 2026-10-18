@@ -1,0 +1,22 @@
+# ./deploy-check が送るリクエスト。1 行 1 リクエストで、上から順に送る。シェルと同じように引用符で区切る。
+#
+#   <種類>  <メソッド>  <URL>  [jq=<式>]  [header=<名前>]...  [curl の引数...]
+#
+#   種類: init    初期化。比べない（--no-init で飛ばす）
+#         login   ログイン。比べない。受け取った Cookie は、以降のリクエストに自動で付く
+#         json    ステータス、Content-Type、header= のヘッダ、整形した JSON を比べる。jq= の式で毎回変わる項目（時刻、ID）を除く
+#         static  ステータス、Content-Type、header= のヘッダ、本文の sha256 を比べる
+#
+# Cookie 以外の認証（Authorization など）は、curl の引数で渡す（-H 'Authorization: Bearer ...'）。
+# TLS の自己署名証明書なら -k、Host で振り分けるなら -H 'Host: ...' か --resolve を付ける。
+# 応答の上限は 30 秒（init は 120 秒）。変えるなら -m <秒> を書く。
+# この行はシェルとして解釈されるので、$(...) などを書くと実行される。
+# 行を足したり並びを変えたりしたら、変更の前の状態で --before からやり直す（--after は paths.txt が変わると止まる）。
+#
+# 例（isucon12 予選。ログインは blackauth が Cookie を発行する）:
+# init    POST  https://admin.t.isucon.local/initialize  -k
+# login   POST  'https://isucon.t.isucon.local/auth/login/player?id=0001'  -k
+# json    GET   https://isucon.t.isucon.local/api/player/competitions  -k  header=Cache-Control
+# json    GET   https://isucon.t.isucon.local/api/player/player/0001  -k
+# json    GET   https://isucon.t.isucon.local/api/me  -k  jq='del(.data.me.id)'
+# static  GET   https://isucon.t.isucon.local/index.html  -k

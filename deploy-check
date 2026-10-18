@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# 回帰の確認の入口。使い方は ./deploy-check --help、詳しくは script/deploy-check/README.md
+exec "$(dirname "$0")/script/deploy-check/deploy-check.sh" "$@"
