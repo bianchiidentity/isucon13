@@ -60,7 +60,8 @@ mysql::install_mysqldef() {
   command -v mysqldef > /dev/null && return 0
   local url="https://github.com/sqldef/sqldef/releases/latest/download/mysqldef_linux_$(dpkg --print-architecture).tar.gz"
   echo "mysqldef を入れる: $url"
-  curl -fsSL "$url" | sudo tar -xz -C /usr/local/bin mysqldef
+  # root で展開すると、アーカイブの持ち主（uid 1001 など）が再現される。root の持ち主にする
+  curl -fsSL "$url" | sudo tar -xz --no-same-owner -C /usr/local/bin mysqldef
 }
 
 mysql::apply_schema() {

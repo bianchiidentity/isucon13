@@ -61,7 +61,8 @@ install_tools() {
     local url="https://github.com/tkuchiki/alp/releases/download/v$ALP_VERSION/alp_linux_$(dpkg --print-architecture).tar.gz"
     echo "alp を入れる: $url"
     if ! dry; then
-      curl -fsSL "$url" | tar -xz -C /usr/local/bin alp
+      # root で展開すると、アーカイブの持ち主（uid 1001 など）が再現される。root の持ち主にする
+      curl -fsSL "$url" | tar -xz --no-same-owner -C /usr/local/bin alp
     fi
   fi
   command -v alp >/dev/null && alp --version
