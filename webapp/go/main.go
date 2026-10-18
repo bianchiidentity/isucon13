@@ -202,6 +202,7 @@ func main() {
 
 	// HTTPサーバ起動
 	listenAddr := net.JoinHostPort("", strconv.Itoa(listenPort))
+	log.Printf("deploy-trial: isupipe starting on %s", listenAddr) // 仮: ./deploy --server の確認用。マージしない
 	if err := e.Start(listenAddr); err != nil {
 		e.Logger.Errorf("failed to start HTTP server: %v", err)
 		os.Exit(1)

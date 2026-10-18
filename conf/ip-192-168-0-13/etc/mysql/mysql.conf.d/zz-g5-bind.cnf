@@ -1,3 +1,5 @@
 # G5: DB を専用の台に分けたので、isu1（192.168.0.11）の app と PowerDNS から受け付ける
 [mysqld]
 bind-address = 0.0.0.0
+# 仮: ./deploy --server の確認用（既定は 100）。マージしない
+max_connect_errors = 100000
