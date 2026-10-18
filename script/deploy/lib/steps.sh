@@ -102,9 +102,16 @@ step::nginx() {
 step::app() {
   log "app（${APP_DIR}）"
   dry && { echo "(dry-run) build と restart は飛ばす"; return 0; }
+  local source_hash
+  source_hash="$(app::source_hash)" || die "ビルド元のハッシュを取得できない"
   # go のビルドキャッシュとバイナリの所有者をそろえるため、アプリのユーザーでビルドする
   sudo -u "$APP_USER" env PATH="$GO_BIN_DIR:$PATH" HOME="$(getent passwd "$APP_USER" | cut -d: -f6)" \
     bash -c "cd '$APP_DIR' && $BUILD_CMD" || die "ビルドに失敗した（アプリは再起動していない）"
+  app::verify_build
+  [[ $(app::source_hash) == "$source_hash" ]] || die "ビルド中にソースが変わった（アプリは再起動していない）"
+  printf '%s\n' "$source_hash" > "$WORK_DIR/app-source-sha256"
+  sudo install -D -m 644 "$WORK_DIR/app-source-sha256" /var/lib/isucon-deploy/app-source-sha256
+  app::configure_service
   local since old_pid
   since="$(date '+%Y-%m-%d %H:%M:%S')"
   old_pid="$(app::main_pid)"
@@ -113,9 +120,64 @@ step::app() {
     sudo journalctl -u "$APP_SERVICE" -n 30 --no-pager >&2 || true
     die "$APP_SERVICE が起動しない"
   fi
+  app::verify_running
   echo "$APP_SERVICE を再起動した（MainPID ${old_pid} → $(app::main_pid)）"
   sudo journalctl -u "$APP_SERVICE" --since "$since" --no-pager 2> /dev/null | grep -iE 'error|panic|fatal' | tail -5 || true
   journald::warn_suppressed "$since"
+}
+
+# ソースと起動対象を同じリポジトリに固定する。ベースの unit は残す。
+app::configure_service() {
+  local dropin="/etc/systemd/system/$APP_SERVICE.d/zz-isucon-deploy.conf"
+  # systemd の展開やシェルの引用と衝突するパスは、誤った起動先を作る前に止める。
+  [[ $APP_DIR =~ ^/[a-zA-Z0-9_./-]+$ && $APP_BINARY =~ ^/[a-zA-Z0-9_./-]+$ ]] \
+    || die "APP_DIR / APP_BINARY に使用できない文字がある"
+  {
+    printf '[Service]\nWorkingDirectory=%s\nExecStart=\nExecStart=%s\n' "$APP_DIR" "$APP_BINARY"
+  } > "$WORK_DIR/app-service.conf"
+  if ! sudo cmp -s "$WORK_DIR/app-service.conf" "$dropin"; then
+    sudo install -D -m 644 "$WORK_DIR/app-service.conf" "$dropin"
+  fi
+  sudo systemctl daemon-reload
+}
+
+app::build_info() {
+  sudo env PATH="$GO_BIN_DIR:$PATH" go version -m "$APP_BINARY"
+}
+
+app::source_hash() {
+  # バイナリや収集ログは含めず、Go ソースと依存定義の変更を検出する。
+  (cd "$APP_DIR" && find . -type f \( -name '*.go' -o -name go.mod -o -name go.sum \) -print0 \
+    | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)
+}
+
+app::verify_build() {
+  local expected info revision
+  expected="$(sudo -u "$APP_USER" git -C "$REPO_DIR" rev-parse HEAD)" || die "リポジトリの版を取得できない"
+  [[ $(realpath "$APP_DIR") == "$(realpath "$REPO_DIR")/webapp/go" ]] \
+    || die "APP_DIR が対象リポジトリの webapp/go と一致しない"
+  info="$(app::build_info)" || die "ビルド情報を取得できない: $APP_BINARY"
+  revision="$(awk '/^[[:space:]]*build[[:space:]]+vcs.revision=/ { sub(/^.*vcs.revision=/, ""); print }' <<< "$info")"
+  [[ $revision == "$expected" ]] || die "バイナリの版が不一致: expected=$expected actual=${revision:-不明}"
+  echo "build revision: $revision"
+  # ローカル deploy は未コミット変更も対象なので、modified は拒否せず記録する。
+  awk '/vcs.modified=/' <<< "$info"
+}
+
+app::verify_running() {
+  local pid expected actual built_source
+  app::verify_build
+  built_source="$(sudo cat /var/lib/isucon-deploy/app-source-sha256)" || die "ビルド元の記録がない。./deploy --only=app を実行する"
+  [[ $(app::source_hash) == "$built_source" ]] || die "ビルド後にソースが変わっている。再デプロイが必要"
+  sudo systemctl is-active --quiet "$APP_SERVICE" || die "$APP_SERVICE が起動していない"
+  pid="$(app::main_pid)"
+  [[ $pid =~ ^[1-9][0-9]*$ ]] || die "MainPID が取得できない"
+  expected="$(sudo sha256sum "$APP_BINARY" | cut -d' ' -f1)" || die "ビルド成果物を読めない"
+  actual="$(sudo sha256sum "/proc/$pid/exe" | cut -d' ' -f1)" || die "実行中バイナリを読めない"
+  [[ $expected == "$actual" ]] || die "実行中バイナリとビルド成果物が不一致（PID ${pid}）"
+  echo "app binary: $APP_BINARY"
+  echo "app pid: $pid"
+  echo "app sha256: $actual"
 }
 
 app::main_pid() {
@@ -178,6 +240,12 @@ deployed::record() {
     echo "server: ${NAME}（${ROLES}）"
     echo "steps: ${STEP_TIMES[*]:-なし}"
     echo "repo: $repo"
+    if role_has "$ROLES" app && [[ -z $ONLY || ",$ONLY," == *,app,* ]]; then
+      echo "app_binary: $APP_BINARY"
+      echo "app_pid: $(app::main_pid)"
+      echo "app_sha256: $(sudo sha256sum "$APP_BINARY" | cut -d' ' -f1)"
+      app::build_info | awk '/vcs.revision=|vcs.modified=/ { print "app_build: " $0 }'
+    fi
     # webapp がリポジトリの外の別の git にあるときだけ、別に書く
     [[ ${app%% *} == "${repo%% *}" ]] || echo "webapp: $app"
   } | sudo tee "$DEPLOYED_FILE" > /dev/null
