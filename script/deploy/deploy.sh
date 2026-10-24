@@ -54,7 +54,7 @@ WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
 deploy_local() {
-  NAME="${NAME:-$(hostname -s)}"
+  if [[ -z $NAME ]]; then NAME="$(server_name)"; fi
   ROLES="$(roles_of "$NAME")"
   # 同じサーバーで 2 つの ./deploy が同時に動くと、片方の巻き戻しがもう片方の反映を消す
   exec 9> /tmp/isucon-deploy.lock

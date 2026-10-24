@@ -35,7 +35,7 @@ sudo --preserve-env=SSH_AUTH_SOCK /home/isucon/isucon13/script/setup-repo/join.s
   isu1=192.168.0.11 isu2=192.168.0.12 isu3=192.168.0.13
 ```
 
-- 名前=IP（プライベート IP）を、isu1 自身も含めて全台ぶん並べる。名前は `./deploy --server=` と `conf/<名前>/` に使う。
+- 名前=IP（プライベート IP）を、isu1 自身も含めて全台ぶん並べる。名前は `./deploy --server=` と `conf/<名前>/`、`roles.env` に使う。各台の `/etc/isucon-server-name` にも書き、前半の `./deploy` はそこから名前を読む（AWS のホスト名は使わない）。
 - ほかの台への最初の接続には、転送した手元の鍵を使う。ログインのユーザーが ubuntu でなければ `--login=isucon` などを付ける。`--dry-run` で、行うことだけを表示する。
 - isu1 の HEAD が push 済みである必要がある。ほかの台は GitHub から同じコミットを取る。
 - 何度実行しても同じ結果になる。台を後から足すときも、全台を並べて実行し直す。
@@ -44,6 +44,7 @@ sudo --preserve-env=SSH_AUTH_SOCK /home/isucon/isucon13/script/setup-repo/join.s
 
 | 台 | 行うこと |
 |---|---|
+| 全台 | `/etc/isucon-server-name` にその台の名前を書く |
 | 全台 | isucon の `~/.ssh/config` に全台の名前と IP を書く（印の行で囲んだ範囲を毎回書き直す）。どの台からでも `./deploy --server=` を実行できる |
 | isu1 | 共有の鍵を自分の `authorized_keys` に足す（どの台から `./deploy --server=` を実行しても isu1 に入れるように。isu1 から自分への ssh にも使う） |
 | ほか | isucon に、deploy key と、ほかの台からの ssh 用の `authorized_keys`、GitHub の `known_hosts` を置く。isu1 と同じブランチ・コミットで clone する。アプリを止め、`/home/isucon/webapp` を `webapp.orig` に移してリンクにし、git に入れなかったもの（ビルドしたバイナリなど）を `webapp.orig` から写して、アプリを起動し直す（止まっていた台は起動しない） |
