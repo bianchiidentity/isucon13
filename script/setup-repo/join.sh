@@ -310,7 +310,6 @@ main() {
   if (( ${#failed[@]} )); then
     die "失敗: ${failed[*]}。直してから、もう一度同じコマンドを実行する"
   fi
-  # ./deploy の mysql の段は、setup.sh（setup-tools）が入れる mysqldef を使うので、先に setup.sh を実行する
   log "完了。次は各台で script/setup/setup.sh を実行する（script/setup/README.md の「当日の最初の順番」）"
 }
 
