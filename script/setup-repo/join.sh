@@ -105,9 +105,11 @@ setup_local_ssh() {
   fi
 
   # 鍵は全台で共有するので、どの台からでも isu1 に入れるようにする（./deploy --server= は自分自身にも ssh する）
-  as_app touch "$ssh_dir/authorized_keys"
-  as_app chmod 600 "$ssh_dir/authorized_keys"
-  if ! grep -qxF "$(cat "$KEY.pub")" "$ssh_dir/authorized_keys"; then
+  if (( ! DRY )); then
+    as_app touch "$ssh_dir/authorized_keys"
+    as_app chmod 600 "$ssh_dir/authorized_keys"
+  fi
+  if ! grep -qxF "$(cat "$KEY.pub")" "$ssh_dir/authorized_keys" 2> /dev/null; then
     echo "authorized_keys に自分の鍵を足す"
     if (( ! DRY )); then
       as_app tee -a "$ssh_dir/authorized_keys" < "$KEY.pub" > /dev/null
@@ -132,12 +134,21 @@ if ! grep -qxF '$pub' authorized_keys; then
   echo '$pub' >> authorized_keys
 fi
 
+# 違う鍵が既にあれば、消さずに退避する（その台の人が自分で作った鍵かもしれない）
 echo '$priv' | base64 -d > id_ed25519.new
-if cmp -s id_ed25519.new id_ed25519; then
-  rm id_ed25519.new
-else
+if [ ! -e id_ed25519 ]; then
   mv id_ed25519.new id_ed25519
   echo '鍵を置いた'
+elif cmp -s id_ed25519.new id_ed25519; then
+  rm id_ed25519.new
+else
+  bak=id_ed25519.bak.\$(date +%Y%m%d-%H%M%S)
+  mv id_ed25519 "\$bak"
+  if [ -e id_ed25519.pub ]; then
+    mv id_ed25519.pub "\$bak.pub"
+  fi
+  mv id_ed25519.new id_ed25519
+  echo "違う鍵があったので ~/.ssh/\$bak に退避し、共有の鍵を置いた"
 fi
 echo '$pub' > id_ed25519.pub
 
@@ -171,26 +182,34 @@ if [ "\$(git rev-parse HEAD)" != '$SHA' ]; then
 fi
 echo "リポジトリ: $BRANCH \$(git log -1 --format='%h %s')"
 
+# 途中で失敗しても、やり直せば続きから進む。アプリを止めたら印を書き、起動したら消す
+was_active='$REPO_DIR/.git/setup-repo-app-was-active'
+start_if_stopped() {
+  if [ -e "\$was_active" ]; then
+    sudo systemctl start '$APP_SERVICE'
+    rm "\$was_active"
+  fi
+}
+
 if [ -L '$WEBAPP_LINK' ] && [ "\$(readlink -f '$WEBAPP_LINK')" = '$REPO_DIR/webapp' ]; then
-  echo "webapp はリンク済み"
+  start_if_stopped
+  echo "webapp はリンク済み。$APP_SERVICE: \$(systemctl is-active '$APP_SERVICE' || true)"
   exit 0
-fi
-if [ -e '$WEBAPP_LINK.orig' ]; then
-  echo '$WEBAPP_LINK.orig が既にある。中身を確かめて、要らなければ消してから実行する' >&2
+elif [ -d '$WEBAPP_LINK' ] && [ ! -L '$WEBAPP_LINK' ] && [ ! -e '$WEBAPP_LINK.orig' ]; then
+  from='$WEBAPP_LINK'           # 初回
+elif [ ! -e '$WEBAPP_LINK' ] && [ -d '$WEBAPP_LINK.orig' ]; then
+  from='$WEBAPP_LINK.orig'      # 前の実行が、移した後に止まった
+else
+  echo '$WEBAPP_LINK と $WEBAPP_LINK.orig が想定外の状態。中身を確かめ、要らないほうを消してから実行する' >&2
+  ls -ld '$WEBAPP_LINK' '$WEBAPP_LINK.orig' >&2 || true
   exit 1
 fi
 
-active=\$(systemctl is-active '$APP_SERVICE' || true)
-if [ "\$active" = active ]; then
-  sudo systemctl stop '$APP_SERVICE'
-fi
-mv '$WEBAPP_LINK' '$WEBAPP_LINK.orig'
-ln -s '$REPO_DIR/webapp' '$WEBAPP_LINK'
-
 # git に入れなかったもの（ビルドしたバイナリ、依存のライブラリ、データ）を元の webapp から写す。追跡しているファイルは上書きしない。
+# アプリが動いたままでも読むだけなので、止める前に写す。
 # 写すのはリポジトリにある名前だけ。リポジトリで消したもの（使わない言語の実装）まで写すと、
 # 中の .gitignore が無いので node_modules などが未追跡で残る
-for src in '$WEBAPP_LINK.orig'/* '$WEBAPP_LINK.orig'/.[!.]*; do
+for src in "\$from"/* "\$from"/.[!.]*; do
   name=\$(basename "\$src")
   if [ "\$name" = .git ] || [ ! -e "$REPO_DIR/webapp/\$name" ]; then
     continue
@@ -202,12 +221,18 @@ if [ -n "\$(git status --porcelain -- webapp)" ]; then
   echo "webapp に未追跡・変更のファイルがある:" >&2
   git status --short -- webapp | head >&2
 fi
-echo "webapp をリンクにした（元は $WEBAPP_LINK.orig）"
 
-if [ "\$active" = active ]; then
-  sudo systemctl start '$APP_SERVICE'
+if [ "\$from" = '$WEBAPP_LINK' ]; then
+  if [ "\$(systemctl is-active '$APP_SERVICE' || true)" = active ]; then
+    touch "\$was_active"
+    sudo systemctl stop '$APP_SERVICE'
+  fi
+  mv '$WEBAPP_LINK' '$WEBAPP_LINK.orig'
 fi
-echo "$APP_SERVICE: \$(systemctl is-active '$APP_SERVICE' || true)（実行前: \$active）"
+ln -s '$REPO_DIR/webapp' '$WEBAPP_LINK'
+echo "webapp をリンクにした（元は $WEBAPP_LINK.orig）"
+start_if_stopped
+echo "$APP_SERVICE: \$(systemctl is-active '$APP_SERVICE' || true)"
 EOF
 }
 
