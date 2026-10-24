@@ -16,6 +16,7 @@ DEPLOY_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$DEPLOY_DIR/../.." && pwd)"
 source "$REPO_DIR/script/lib/common.sh"
 # shellcheck source=deploy.env
+require_file "$DEPLOY_DIR/deploy.env"
 source "$DEPLOY_DIR/deploy.env"
 
 # コマンドライン引数から決まる値。読むのは parse_args だけで、ほかの関数には main が引数で渡す

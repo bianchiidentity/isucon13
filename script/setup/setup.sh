@@ -15,6 +15,7 @@ SETUP_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SETUP_DIR/../.." && pwd)"
 source "$REPO_DIR/script/lib/common.sh"
 # shellcheck source=../deploy/deploy.env
+require_file "$REPO_DIR/script/deploy/deploy.env"
 source "$REPO_DIR/script/deploy/deploy.env"
 
 GIT_USER=""
