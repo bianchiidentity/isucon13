@@ -56,34 +56,16 @@ mysql::restart_or_restore() {
   die "MySQL が起動しないので、設定を元に戻した"
 }
 
-MYSQLDEF=mysqldef   # 使う mysqldef。dry-run で無かったときは、一時ディレクトリに取ってきたもの
-
-mysql::install_mysqldef() {
-  command -v mysqldef > /dev/null && return 0
-  local url="https://github.com/sqldef/sqldef/releases/latest/download/mysqldef_linux_$(dpkg --print-architecture).tar.gz"
-  if dry; then
-    # dry-run はサーバーを変えない。WORK_DIR（終わったら消える）に取ってきて、差分を見るのにだけ使う
-    echo "mysqldef が無いので、一時的に取ってきて使う（dry-run なので入れない）: $url"
-    curl -fsSL "$url" | tar -xz -C "$WORK_DIR" mysqldef
-    MYSQLDEF="$WORK_DIR/mysqldef"
-    return 0
-  fi
-  echo "mysqldef を入れる: $url"
-  # root で展開すると、アーカイブの持ち主（uid 1001 など）が再現される。root の持ち主にする
-  curl -fsSL "$url" | sudo tar -xz --no-same-owner -C /usr/local/bin mysqldef
-}
-
 mysql::apply_schema() {
   log "スキーマ（sqldef）"
   [[ -n ${SCHEMA_FILE:-} ]] || { echo "SCHEMA_FILE が空なので飛ばす"; return 0; }
   [[ -f $SCHEMA_FILE ]] || die "SCHEMA_FILE がない: $SCHEMA_FILE"
-  mysql::install_mysqldef
 
   local out schema="$WORK_DIR/schema.sql" args=(-u "$DB_USER" -p "$DB_PASS" -h "$DB_HOST" -P "$DB_PORT")
   # sqldef は「あるべき姿」の CREATE 文だけを受け取る。ISUCON の schema.sql によくある DROP TABLE IF EXISTS は除く
   grep -viE '^[[:space:]]*DROP[[:space:]]+TABLE' "$SCHEMA_FILE" > "$schema"
 
-  out="$("$MYSQLDEF" "${args[@]}" --dry-run "$DB_NAME" < "$schema")" || { echo "$out"; die "mysqldef --dry-run に失敗した"; }
+  out="$(mysqldef "${args[@]}" --dry-run "$DB_NAME" < "$schema")" || { echo "$out"; die "mysqldef --dry-run に失敗した"; }
   echo "$out"
   grep -q 'Nothing is modified' <<< "$out" && return 0
   # schema.sql に書き漏れがあると、sqldef はその列やインデックスを消そうとする
@@ -92,8 +74,8 @@ mysql::apply_schema() {
   fi
   dry && return 0
   # 新しい sqldef は、--enable-drop がないと DROP を飛ばす
-  if (( ALLOW_DROP )) && "$MYSQLDEF" --help 2>&1 | grep -q -- '--enable-drop'; then args+=(--enable-drop); fi
-  "$MYSQLDEF" "${args[@]}" "$DB_NAME" < "$schema"
+  if (( ALLOW_DROP )) && mysqldef --help 2>&1 | grep -q -- '--enable-drop'; then args+=(--enable-drop); fi
+  mysqldef "${args[@]}" "$DB_NAME" < "$schema"
 }
 
 # --- nginx ---
