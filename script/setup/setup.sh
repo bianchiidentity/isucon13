@@ -6,8 +6,8 @@
 #
 # 1. OS の自動アップデートを止める（base-conf と同じ。apt を使う前に止める）
 # 2. /etc/hosts にこのサーバーのホスト名を足す（無いと sudo のたびに「unable to resolve host」が出る）
-# 3. isucon の git の作者を、その台を使う人の GitHub のユーザー名にする（サーバー上でのコミットに記録される）
-# 4. setup-tools.sh でツールを入れる
+# 3. setup-tools.sh でツールを入れる（4 で使う jq も）
+# 4. isucon の git の作者を、その台を使う人の GitHub のユーザー名にする（サーバー上でのコミットに記録される）
 # 済んでいるものは飛ばす。何度実行しても同じ結果になる
 set -euo pipefail
 
@@ -67,15 +67,27 @@ setup_hosts() {
   fi
 }
 
+setup_tools() {
+  if (( DRY )); then
+    "$REPO_DIR/script/setup-tools/setup-tools.sh" --dry-run
+  else
+    "$REPO_DIR/script/setup-tools/setup-tools.sh"
+  fi
+}
+
 # メールアドレスは GitHub の noreply（<ID>+<ユーザー名>@users.noreply.github.com）にし、コミットをその人のアカウントに結び付ける
 setup_git_author() {
   local json id email
   log "isucon の git の作者"
+  if (( DRY )) && ! command -v jq > /dev/null; then
+    echo "設定する: $GIT_USER（ID は setup-tools が jq を入れた後に GitHub の API で引く）"
+    return 0
+  fi
   if ! json="$(curl -fsS "https://api.github.com/users/$GIT_USER")"; then
     die "GitHub のユーザー $GIT_USER を引けない。名前を確かめる"
   fi
-  id="$(printf '%s\n' "$json" | sed -n 's/^  "id": \([0-9]*\),$/\1/p')"
-  if [[ -z $id ]]; then
+  id="$(jq -r '.id // empty' <<< "$json")"
+  if [[ ! $id =~ ^[0-9]+$ ]]; then
     die "GitHub の応答から $GIT_USER の ID を取れない"
   fi
   email="$id+$GIT_USER@users.noreply.github.com"
@@ -92,20 +104,12 @@ setup_git_author() {
   fi
 }
 
-setup_tools() {
-  if (( DRY )); then
-    "$REPO_DIR/script/setup-tools/setup-tools.sh" --dry-run
-  else
-    "$REPO_DIR/script/setup-tools/setup-tools.sh"
-  fi
-}
-
 main() {
   parse_args "$@"
   stop_auto_updates
   setup_hosts
-  setup_git_author
   setup_tools
+  setup_git_author
 }
 
 main "$@"

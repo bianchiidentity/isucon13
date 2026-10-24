@@ -4,14 +4,14 @@
 # 使い方: sudo script/setup-tools/setup-tools.sh            入れる
 #         sudo script/setup-tools/setup-tools.sh --dry-run  入れるものを表示するだけ
 #
-# 1. apt: graphviz（pprof のグラフ）、sysstat（pidstat、iostat、mpstat）
+# 1. apt: graphviz（pprof のグラフ）、sysstat（pidstat、iostat、mpstat）、jq（setup.sh が GitHub の API の応答を読む）
 # 2. mysqldef（./deploy がスキーマの差分を当てる）を版を固定して入れる
 # 入っているものは飛ばす。何度実行しても同じ結果になる。
-# alp、pt-query-digest、jq は base-conf が入れるので、ここでは入れない
+# alp と pt-query-digest は base-conf が入れるので、ここでは入れない（jq は base-conf も入れるが、setup.sh が先に使う）
 set -euo pipefail
 
 MYSQLDEF_VERSION=v3.11.26
-APT_PACKAGES=(graphviz sysstat)
+APT_PACKAGES=(graphviz sysstat jq)
 # sysstat が入れる定期収集。10 分ごとに sadc が動き、計測に混ざるので止める（pidstat などは止めても使える）
 SYSSTAT_UNITS=(sysstat.service sysstat-collect.timer sysstat-summary.timer)
 
@@ -80,6 +80,7 @@ show_versions() {
   log "版"
   command -v dot >/dev/null && dot -V 2>&1
   command -v pidstat >/dev/null && pidstat -V 2>&1 | head -1
+  command -v jq >/dev/null && jq --version
   command -v mysqldef >/dev/null && mysqldef --version
   for u in "${SYSSTAT_UNITS[@]}"; do
     systemctl cat "$u" >/dev/null 2>&1 && printf '%s: %s\n' "$u" "$(systemctl is-enabled "$u" 2>/dev/null || true)"

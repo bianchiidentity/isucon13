@@ -15,9 +15,9 @@
 | 入口 | 用途 |
 |---|---|
 | [`script/setup-repo/join.sh`](script/setup-repo/README.md) | 1 台目と同じリポジトリの状態を、ほかのサーバーに作る（deploy key、clone、webapp のリンク） |
-| [`script/setup/setup.sh`](script/setup/README.md) | 各サーバーで最初に 1 回行う準備（自動アップデートの停止、/etc/hosts、git の作者、setup-tools）。当日の最初の順番もここ |
+| [`script/setup/setup.sh`](script/setup/README.md) | 各サーバーで最初に 1 回行う準備（自動アップデートの停止、/etc/hosts、setup-tools、git の作者）。当日の最初の順番もここ |
 | [`script/base-conf/apply.sh`](script/base-conf/README.md) | 競技の開始直後に入れる設定（自動アップデートの停止、計測ツール、nginx と MySQL の設定） |
-| [`script/setup-tools/setup-tools.sh`](script/setup-tools/README.md) | ツール（graphviz、sysstat、版を固定した mysqldef）。setup.sh が呼ぶ |
+| [`script/setup-tools/setup-tools.sh`](script/setup-tools/README.md) | ツール（graphviz、sysstat、jq、版を固定した mysqldef）。setup.sh が呼ぶ |
 | [`./deploy`](script/deploy/README.md) | リポジトリのコードと設定をサーバーに反映する |
 | [`./deploy-check`](script/deploy-check/README.md) | 変更の前後で応答が変わっていないかを確かめる |
 

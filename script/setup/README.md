@@ -14,8 +14,8 @@ sudo script/setup/setup.sh --git-user=<GitHub のユーザー名>
 |---|---|
 | OS の自動アップデートを止める（base-conf と同じ） | setup-tools が apt を使うので、その前に止める。動いたままだと `apt-get update` を引き金に数百のパッケージが更新され、MySQL が再起動した（isucon12） |
 | `/etc/hosts` に `127.0.1.1 <ホスト名>` を足す（引けなければ） | 無いと sudo のたびに「unable to resolve host」が出る（isucon13 の AMI） |
-| isucon の git の作者（`user.name`、`user.email`）を `--git-user` の人にする | サーバー上でのコミットに記録される。メールアドレスは GitHub の noreply（`<ID>+<ユーザー名>@users.noreply.github.com`）にし、コミットをその人のアカウントに結び付ける。push の認証（deploy key）とは別 |
-| [`setup-tools.sh`](../setup-tools/README.md) でツールを入れる | graphviz、sysstat、版を固定した mysqldef |
+| [`setup-tools.sh`](../setup-tools/README.md) でツールを入れる | graphviz、sysstat、jq、版を固定した mysqldef |
+| isucon の git の作者（`user.name`、`user.email`）を `--git-user` の人にする | サーバー上でのコミットに記録される。メールアドレスは GitHub の noreply（`<ID>+<ユーザー名>@users.noreply.github.com`）にし、コミットをその人のアカウントに結び付ける。ID は GitHub の API の応答を jq で読む。push の認証（deploy key）とは別 |
 
 - 何度実行しても同じ結果になる。台を使う人が替わったら、`--git-user` を変えて実行し直す。
 - GitHub の API（`api.github.com`）でユーザーの ID を引く。名前を間違えると止まる。
