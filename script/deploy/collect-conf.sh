@@ -15,6 +15,7 @@ shopt -s inherit_errexit
 DEPLOY_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$DEPLOY_DIR/../.." && pwd)"
 source "$REPO_DIR/script/lib/common.sh"
+require_file "$DEPLOY_DIR/deploy.env"
 # shellcheck source=deploy.env
 source "$DEPLOY_DIR/deploy.env"
 

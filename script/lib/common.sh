@@ -23,6 +23,22 @@ role_has() {  # $1: 役割の一覧（roles_of の出力）、$2: 役割
   [[ " $1 " == *" $2 "* ]]
 }
 
+require_file() {  # $1: 問題ごとに書くファイル。無ければ、テンプレートから写すよう伝えて止まる
+  if [[ ! -f $1 ]]; then
+    die "$1 が無い。$1.template を写して、問題に合わせて書く"
+  fi
+}
+
+require_values() {  # $@: 変数名。deploy.env の値が空なら、名前を並べて止まる（テンプレートから写したまま埋めていない）
+  local v empty=()
+  for v in "$@"; do
+    if [[ -z ${!v:-} ]]; then empty+=("$v"); fi
+  done
+  if (( ${#empty[@]} )); then
+    die "deploy.env の ${empty[*]} が空。README の「問題に合わせる」で埋める"
+  fi
+}
+
 elapsed() {  # $1: 開始時の ${EPOCHREALTIME}。経過秒数を小数 1 桁で出す
   awk -v a="$1" -v b="$EPOCHREALTIME" 'BEGIN { printf "%.1f", b - a }'
 }

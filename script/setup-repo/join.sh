@@ -14,6 +14,7 @@ set -euo pipefail
 SETUP_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SETUP_DIR/../.." && pwd)"
 source "$REPO_DIR/script/lib/common.sh"
+require_file "$REPO_DIR/script/deploy/deploy.env"
 # shellcheck source=../deploy/deploy.env
 source "$REPO_DIR/script/deploy/deploy.env"
 
@@ -43,6 +44,7 @@ parse_args() {
   if (( EUID != 0 )); then
     die "sudo --preserve-env=SSH_AUTH_SOCK で実行する"
   fi
+  require_values APP_SERVICE   # ほかの台でアプリを止めて起動し直すのに使う
   APP_HOME="$(getent passwd "$APP_USER" | cut -d: -f6)"
   KEY=$APP_HOME/.ssh/id_ed25519     # GitHub の deploy key。サーバー間の ssh にも使う
 }

@@ -34,13 +34,14 @@ for arg in "$@"; do
 done
 [[ -n $MODE ]] || { sed -n '4,6p' "$0" >&2; exit 2; }
 if [[ $MODE == version ]]; then
+  require_file "$REPO_DIR/script/deploy/deploy.env"
   source "$REPO_DIR/script/deploy/deploy.env"
   source "$REPO_DIR/script/deploy/lib/steps.sh"
   app::verify_running
   exit 0
 fi
 command -v jq > /dev/null || die "jq がない（base-conf の apply.sh で入る。sudo apt-get install -y jq でもよい）"
-[[ -f $PATHS_FILE ]] || die "$PATHS_FILE がない"
+require_file "$PATHS_FILE"
 
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT

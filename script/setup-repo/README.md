@@ -23,8 +23,8 @@
 
    - `.gitignore` に生成物（ビルドしたバイナリ、依存のライブラリ）を入れる。元の `webapp/.gitignore` が除外していたもの（isucon13 では `/public/`）も確かめる。
    - 使わない言語の実装は消してよい。
-   - base-conf を入れる前に、`script/deploy/collect-conf.sh` で素の設定を集めておくと、base-conf の差分が残る。
-4. commit して push する。
+4. `script/deploy/deploy.env` の `APP_SERVICE` に、3 で止めたアプリのサービス名を書く。`join.sh` が、ほかの台でアプリを止めて起動し直すのに使う。
+5. commit して push する。
 
 ## 2 台目以降
 

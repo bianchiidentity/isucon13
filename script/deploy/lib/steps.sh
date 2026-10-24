@@ -60,6 +60,7 @@ mysql::apply_schema() {
   log "スキーマ（sqldef）"
   [[ -n ${SCHEMA_FILE:-} ]] || { echo "SCHEMA_FILE が空なので飛ばす"; return 0; }
   [[ -f $SCHEMA_FILE ]] || die "SCHEMA_FILE がない: $SCHEMA_FILE"
+  require_values DB_NAME
 
   local out schema="$WORK_DIR/schema.sql" args=(-u "$DB_USER" -p "$DB_PASS" -h "$DB_HOST" -P "$DB_PORT")
   # sqldef は「あるべき姿」の CREATE 文だけを受け取る。ISUCON の schema.sql によくある DROP TABLE IF EXISTS は除く
@@ -92,6 +93,7 @@ step::nginx() {
 # --- app ---
 step::app() {
   log "app（${APP_DIR}）"
+  require_values APP_SERVICE APP_BINARY BUILD_CMD
   dry && { echo "(dry-run) build と restart は飛ばす"; return 0; }
   local source_hash
   source_hash="$(app::source_hash)" || die "ビルド元のハッシュを取得できない"
