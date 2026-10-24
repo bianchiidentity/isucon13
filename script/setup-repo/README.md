@@ -50,7 +50,7 @@ sudo --preserve-env=SSH_AUTH_SOCK /home/isucon/isucon13/script/setup-repo/join.s
 | isu1 | 共有の鍵を自分の `authorized_keys` に足す（どの台から `./deploy --server=` を実行しても isu1 に入れるように。isu1 から自分への ssh にも使う） |
 | ほか | isucon に、deploy key と、ほかの台からの ssh 用の `authorized_keys`、GitHub の `known_hosts` を置く。isu1 と同じブランチ・コミットで clone する。アプリを止め、`/home/isucon/webapp` を `webapp.orig` に移してリンクにし、git に入れなかったもの（ビルドしたバイナリなど）を `webapp.orig` から写して、アプリを起動し直す（止まっていた台は起動しない） |
 
-終わったら、isucon で `./deploy --server=isu1,isu2,isu3 --dry-run` を実行し、全台の差分を確かめる。
+終わったら、各台で [`setup.sh`](../setup/README.md) を実行する。全台の差分は、base-conf と collect-conf の後に `./deploy --server=isu1,isu2,isu3 --dry-run` で確かめる（[当日の最初の順番](../setup/README.md#当日の最初の順番)）。
 
 ## 2 回目以降
 

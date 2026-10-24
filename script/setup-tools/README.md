@@ -13,7 +13,7 @@ sudo script/setup-tools/setup-tools.sh
 | graphviz | `go tool pprof -http` や svg で、プロファイルをグラフにする。`bench.sh` の `-top` には要らない |
 | sysstat | `pidstat`（プロセスごとの CPU の推移）、`iostat`、`mpstat` |
 | jq | `setup.sh` が GitHub の API の応答を読む。base-conf も入れるが、setup.sh が先に使う |
-| mysqldef（`v3.11.26` に固定） | `./deploy` がスキーマの差分を当てる。入っていなければ `./deploy` が latest を入れるので、版を揃えたいときに先に入れる |
+| mysqldef（`v3.11.26` に固定） | `./deploy` がスキーマの差分を当てる。`./deploy` は入れないので、mysql の役割のサーバーには先に入れておく |
 
 - 何度実行しても同じ結果になる。mysqldef の版が違えば入れ替える。
 - sysstat の定期収集（10 分ごと）は止める。計測に混ざるため。

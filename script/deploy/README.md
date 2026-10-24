@@ -50,7 +50,7 @@ DB を新規作成する場合もスキーマ定義から作成される。
 - 各サーバーが GitHub から fetch できる。`--server` では、実行したサーバーで push まで済ませておく。
 - `--server` では、全サーバーで、リポジトリが同じパスにある。実行したサーバーから `ssh <サーバー名>` で鍵だけで入れる（`~/.ssh/config` の `Host isu1` など）。
 - `roles.env` のサーバー名と、`--server` に渡す名前が同じ。
-- mysql の役割のサーバーで、sqldef を入れるためにインターネットにつながる（初回だけ）。`deploy.env` の DB ユーザーが、ALTER できる。
+- mysql の役割のサーバーに、`setup-tools.sh` で mysqldef が入っている。`deploy.env` の DB ユーザーが、ALTER できる。
 
 ### 実行すると毎回起きること
 
