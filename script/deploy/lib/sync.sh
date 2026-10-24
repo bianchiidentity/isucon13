@@ -1,7 +1,8 @@
 # 反映の前の git の取り込み（--no-pull で止める）。
 # origin/<今のブランチ> を取り込み、main 以外のブランチなら origin/main もマージする。
-# main にはチームで承認した改善が入るので、それを含めて測らないと今のスコアがわからない（TODO 8）。
-# HEAD が変わったら ./deploy を実行し直す。bash はスクリプトを少しずつ読むので、実行中に deploy.sh が書き換わると壊れる
+# main にはチームで承認した改善が入るので、それを含めて測らないと今のスコアがわからない。
+# HEAD が変わったら ./deploy を実行し直す。lib/*.sh、deploy.env、roles.env は起動したときに読み込み済みなので、
+# そのまま進むと取り込む前の内容で反映してしまう
 
 SYNC_MAIN=main
 
@@ -28,6 +29,7 @@ sync::run() {
     # --branch は済んだので外す（--no-pull と一緒には使えない）
     local a args=()
     for a in "$@"; do [[ $a == --branch=* ]] || args+=("$a"); done
+    # exec で今のプロセスを新しい ./deploy に置き換える。--no-pull で、もう一度取り込まないようにする
     exec "$REPO_DIR/deploy" "${args[@]}" --no-pull
   fi
 }
