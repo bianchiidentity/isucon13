@@ -94,7 +94,10 @@ script/deploy/
 ## 当日の準備
 
 1. 各サーバーにリポジトリを clone し、`deploy.env` を実物に合わせる。`SCHEMA_FILE` は、初期化のスクリプト（`init.sh` など）が流す SQL。
-2. G1 の base-conf を入れた後に `collect-conf.sh` で設定を集めて commit し、`./deploy --dry-run` で差分が出ないことを確かめる。
+2. G1 の base-conf を入れた後、誰も触る前に、1 台で `collect-conf.sh --server=<全台>` を実行して設定を集めて commit し、`./deploy --dry-run` で差分が出ないことを確かめる。
+   - 集める前の `conf/default` のまま `./deploy` すると、base-conf の nginx の設定が消える（`worker_connections` が戻り、元の `access_log` も戻って alp の集計が崩れる）。
+   - 全台のファイルのハッシュを比べ、全台で同じなら `conf/default/`、違う（または一部の台にしか無い）なら `conf/<サーバー名>/` に置く。`env.sh` のように台ごとに中身が違うファイルを、人が選ばなくてよい。最後に台ごとのファイルの一覧が出るので、意図した違いかを確かめる。
+   - `--server` の名前は、`./deploy --server=` に渡す名前と同じにする。実行するサーバー自身にも ssh で入れる必要がある。
 3. 後半に入るとき、上の「必要な条件」をそろえ、`roles.env` を書く。構成の変更そのもの（MySQL の bind-address やユーザー、アプリの DB のホスト）は手で行い、結果を `conf/` に書く。
 
 ## webapp をリポジトリに入れる
