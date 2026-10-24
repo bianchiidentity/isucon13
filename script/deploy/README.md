@@ -91,9 +91,53 @@ script/deploy/
   | `/var/lib/isucon-deploy/deployed` | 最後に反映した版（日時、段、リポジトリと webapp のコミット、未コミットの変更の有無） |
   | `/tmp/isucon-deploy/<日時>/` | `--server` のときの、サーバーごとのログ |
 
+## 問題に合わせる
+
+deploy は isucon13 の構成（Go のアプリを systemd で動かす、ホストの MySQL に DB が 1 つ、前段は nginx）を前提に書いてある。当日の最初（ベースラインのベンチを待つ間）に、1 台目で問題に合わせ、commit・push する。Claude に任せるときは `dora-isucon-deploy-adapt` スキルを使う。
+
+### deploy.env の値
+
+どの問題でも、全部を実物で確かめて書き換える。
+
+| 値 | 調べ方 |
+|---|---|
+| `APP_SERVICE` | `systemctl list-units --type=service --state=running` でアプリらしいものを探す。マニュアルや `/home/isucon` の README にも書いてあることが多い |
+| `APP_USER` | `systemctl cat <APP_SERVICE>` の `User=` |
+| `APP_DIR`、`APP_BINARY` | 同じ unit の `WorkingDirectory=` と `ExecStart=`。`/home/isucon/webapp/...` はリポジトリの `$REPO_DIR/webapp/...` に読み替える |
+| `BUILD_CMD` | `webapp/go` の Makefile や README。出力の名前を `APP_BINARY` と合わせる |
+| `GO_BIN_DIR` | `sudo -iu isucon which go` のディレクトリ |
+| `APP_HEALTH_URL` | nginx の `proxy_pass` の行き先（`ss -tlnp` でアプリの待ち受けを確かめる）。空でも動く |
+| `MYSQL_SERVICE` | `systemctl list-unit-files \| grep -E 'mysql\|mariadb'` |
+| `DB_HOST` から `DB_NAME` | アプリが読む環境変数（unit の `Environment=` や `EnvironmentFile=`、`env.sh`）と、初期化のスクリプト（`init.sh` など） |
+| `SCHEMA_FILE` | 初期化のスクリプトが流す、CREATE TABLE の入った SQL。初期データの INSERT が混ざっていたら、CREATE 文だけのファイルに分ける |
+| `NGINX_ACCESS_LOG`、`MYSQL_SLOW_LOG` | base-conf が決める場所。普通は変えない |
+| `COLLECT_PATHS` | nginx の設定、DB の設定のディレクトリ、アプリの unit、アプリが読む環境変数のファイル。ほかのミドルウェア（PowerDNS など）を使うなら、その設定も |
+
+### 前提が外れるとき
+
+overview（`dora-isucon-overview`）のアーキテクチャの節と実物を見て、次のどれに当たるかを判断する。値だけでは足りず、コードを直すものもある。
+
+| 前提 | 外れる例 | 直すところ |
+|---|---|---|
+| アプリは Go で、`webapp/go` にある | Go 以外の言語を使う | `app::verify_build` と `app::build_info` は Go 専用（`go version -m` でバイナリの版を確かめ、`APP_DIR` が `webapp/go` であることも確かめる）。言語に合わせて直すか、外す |
+| アプリは systemd がホストの上で動かす | docker compose で動かす（isucon12 予選） | `step::app` を compose 用にする（`docker compose up -d --build <サービス>` など）。`app::configure_service`（systemd の drop-in）と、MainPID とバイナリの照合は使えない |
+| unit の `ExecStart=` はバイナリだけ | 引数やラッパー（`/bin/sh -c ...`）がある | `app::configure_service` は `ExecStart=` を `APP_BINARY` だけに置き換える。引数が消えるので、drop-in の書き方を直す |
+| DB はホストの MySQL | MariaDB（isucon11 予選） | `MYSQL_SERVICE=mariadb`。`COLLECT_PATHS` の `/etc/mysql/mysql.conf.d` を `/etc/mysql/mariadb.conf.d` に |
+| | MySQL がコンテナ | mysql の段（cnf の反映と再起動、sqldef）は使えない。`SCHEMA_FILE` を空にし、cnf はコンテナの設定として扱う |
+| | SQLite（isucon12 予選のテナントの DB） | mysql の段の sqldef は mysqldef だけを使う。テナントごとに DB のファイルが多数あるので、`SCHEMA_FILE` を空にし、スキーマは初期化のスクリプトと SQL のファイルで変える |
+| DB は 1 つ | 2 つ以上（isucon13 は isupipe と PowerDNS の isudns） | `SCHEMA_FILE` は 1 つだけ。チューニングで触る DB を選ぶ。両方なら mysql の段を直す |
+| 前段は nginx | h2o や envoy など | `step::nginx`（`nginx -t` と reload）と base-conf の nginx の段を、その製品に合わせる |
+| 役割は nginx・app・mysql | ほかのミドルウェア（PowerDNS、memcached、redis） | 設定は `COLLECT_PATHS` に足せば共通の段が反映するが、共通の段は `daemon-reload` と `sysctl --system` しかしない。reload や restart が要るなら段を足す（`step::<名前>` と `run_step`） |
+
+### 終わったと言える条件
+
+1. 1 台目で `./deploy --dry-run` が全段を通る（この時点の `conf/` はまだ集めていないので、設定の差分は出てよい。止まらないことを確かめる）。
+2. ベンチの最中でないときに、1 台目で `./deploy --only=app` を 1 回実行し、ビルド、再起動、版の照合が通り、サイトが応答する。
+3. commit・push する。この後、base-conf と collect-conf を行い、`./deploy --server=<全台> --dry-run` で差分が出ないことを確かめる（[当日の最初の順番](../setup/README.md#当日の最初の順番)）。
+
 ## 当日の準備
 
-1. 各サーバーにリポジトリを clone し、`deploy.env` を実物に合わせる。`SCHEMA_FILE` は、初期化のスクリプト（`init.sh` など）が流す SQL。
+1. 各サーバーにリポジトリを clone し（`join.sh`）、`deploy.env` と deploy を問題に合わせる（上の「問題に合わせる」）。
 2. G1 の base-conf を入れた後、誰も触る前に、1 台で `collect-conf.sh --server=<全台>` を実行して設定を集めて commit し、`./deploy --dry-run` で差分が出ないことを確かめる。
    - 集める前の `conf/default` のまま `./deploy` すると、base-conf の nginx の設定が消える（`worker_connections` が戻り、元の `access_log` も戻って alp の集計が崩れる）。
    - 全台のファイルのハッシュを比べ、全台で同じなら `conf/default/`、違う（または一部の台にしか無い）なら `conf/<サーバー名>/` に置く。`env.sh` のように台ごとに中身が違うファイルを、人が選ばなくてよい。最後に台ごとのファイルの一覧が出るので、意図した違いかを確かめる。
