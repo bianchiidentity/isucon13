@@ -38,6 +38,7 @@ sudo --preserve-env=SSH_AUTH_SOCK /home/isucon/isucon13/script/setup-repo/join.s
 - 名前=IP（プライベート IP）を、isu1 自身も含めて全台ぶん並べる。名前は `./deploy --server=` と `conf/<名前>/`、`roles.env` に使う。各台の `/etc/isucon-server-name` にも書き、前半の `./deploy` はそこから名前を読む（AWS のホスト名は使わない）。
 - ほかの台への最初の接続には、転送した手元の鍵を使う。ログインのユーザーが ubuntu でなければ `--login=isucon` などを付ける。`--dry-run` で、行うことだけを表示する。
 - isu1 の HEAD が push 済みである必要がある。ほかの台は GitHub から同じコミットを取る。
+- リポジトリが public なら止まる。レギュレーションで、競技が終わるまで内容を公開・共有できないため（認証なしの https で読めるかで確かめる）。public のリポジトリで過去問を演習するときは `--allow-public` を付ける。
 - 何度実行しても同じ結果になる。台を後から足すときも、全台を並べて実行し直す。
 
 各台で行うこと:
