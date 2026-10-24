@@ -26,7 +26,7 @@ sudo script/setup/setup.sh --git-user=<GitHub のユーザー名>
 1. 1 台目で鍵を作り、deploy key に登録して、webapp をリポジトリに入れる（[setup-repo](../setup-repo/README.md) の「1 台目」）
 2. 1 台目で `join.sh` を 1 回実行し、全台を同じリポジトリの状態にする
 3. 各台で `setup.sh` を実行する
-4. ベースラインのベンチを 1 回回す（base-conf の前のスコア）。待つ間に、1 台目で `script/deploy/deploy.env`（サービス名、ビルド、DB、スキーマ、`COLLECT_PATHS`）を問題に合わせて commit・push する。6 の collect-conf と `./deploy` がこの値を使う
+4. ベースラインのベンチを 1 回回す（base-conf の前のスコア）。待つ間に、1 台目で `deploy.env` と deploy を問題に合わせて commit・push する（[deploy](../deploy/README.md#問題に合わせる) の「問題に合わせる」。Claude には `dora-isucon-deploy-adapt` スキルで任せる）。6 の collect-conf と `./deploy` がこの値を使う
 5. 1 台目の人が、全台に base-conf を入れる（[base-conf](../base-conf/README.md) の「使い方」）
 6. 続けて 1 台目で `script/deploy/collect-conf.sh --server=isu1,isu2,isu3` を実行し、commit・push する。`./deploy --server=isu1,isu2,isu3 --dry-run` で差分が出ないことを確かめる（[deploy](../deploy/README.md) の「当日の準備」）
 7. ほかの人は pull する
