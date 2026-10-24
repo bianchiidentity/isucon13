@@ -137,6 +137,13 @@ overview（`dora-isucon-overview`）のアーキテクチャの節と実物を�
 
 1. 1 台目で `./deploy --dry-run` が全段を通る（この時点の `conf/` はまだ集めていないので、設定の差分は出てよい。止まらないことを確かめる）。
 2. ベンチの最中でないときに、1 台目で `./deploy --only=app` を 1 回実行し、ビルド、再起動、版の照合が通り、サイトが応答する。
+   - 1 回目は systemd の drop-in（`/etc/systemd/system/<APP_SERVICE>.d/zz-isucon-deploy.conf`）を書き、`ExecStart=` を `APP_BINARY` に置き換えてから再起動する。値が間違っていると、アプリが起動しないまま止まる。直すまでの間は、drop-in を消して元の unit で起動し直す。
+
+     ```bash
+     sudo rm /etc/systemd/system/<APP_SERVICE>.d/zz-isucon-deploy.conf
+     sudo systemctl daemon-reload
+     sudo systemctl restart <APP_SERVICE>
+     ```
 3. commit・push する。この後、base-conf と collect-conf を行い、`./deploy --server=<全台> --dry-run` で差分が出ないことを確かめる（[当日の最初の順番](../setup/README.md#当日の最初の順番)）。
 
 ## 当日の準備
