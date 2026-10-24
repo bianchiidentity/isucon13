@@ -127,10 +127,16 @@ active=\$(systemctl is-active '$APP_SERVICE' || true)
 [ "\$active" = active ] && sudo systemctl stop '$APP_SERVICE'
 mv '$WEBAPP_LINK' '$WEBAPP_LINK.orig'
 ln -s '$REPO_DIR/webapp' '$WEBAPP_LINK'
-# git に入れなかったもの（ビルドしたバイナリ、依存のライブラリ、データ）を元の webapp から移す。
-# 追跡しているファイルは上書きしない。リポジトリで消したもの（使わない言語の実装）は、移した後に消す
-rsync -a --ignore-existing --exclude=/.git '$WEBAPP_LINK.orig/' '$REPO_DIR/webapp/'
-git clean -fdq -- webapp
+# git に入れなかったもの（ビルドしたバイナリ、依存のライブラリ、データ）を元の webapp から写す。追跡しているファイルは上書きしない。
+# 写すのはリポジトリにある名前だけ。リポジトリで消したもの（使わない言語の実装）まで写すと、
+# 中の .gitignore が無いので node_modules などが未追跡で残る
+for src in '$WEBAPP_LINK.orig'/* '$WEBAPP_LINK.orig'/.[!.]*; do
+  name=\$(basename "\$src")
+  [ "\$name" != .git ] && [ -e "$REPO_DIR/webapp/\$name" ] || continue
+  rsync -a --ignore-existing "\$src" '$REPO_DIR/webapp/'
+done
+git clean -fdq -- webapp   # 消したファイルを写していたら消す
+[ -z "\$(git status --porcelain -- webapp)" ] || { echo "webapp に未追跡・変更のファイルがある:" >&2; git status --short -- webapp | head >&2; }
 echo "webapp をリンクにした（元は $WEBAPP_LINK.orig）"
 [ "\$active" = active ] && sudo systemctl start '$APP_SERVICE'
 echo "$APP_SERVICE: \$(systemctl is-active '$APP_SERVICE' || true)（実行前: \$active）"
