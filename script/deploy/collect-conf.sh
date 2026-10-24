@@ -16,11 +16,19 @@ REPO_DIR="$(cd "$DEPLOY_DIR/../.." && pwd)"
 source "$DEPLOY_DIR/deploy.env"
 
 SERVERS="" TO=""
-case "${1:-}" in
-  --server=*) SERVERS="${1#*=}" ;;
-  --to=*) TO="${1#*=}" ;;
-  *) echo "使い方: $0 --server=isu1,isu2,isu3 | --to=<名前>" >&2; exit 2 ;;
-esac
+HOSTS=()
+declare -A HASH=()      # "サーバー|パス" → ハッシュ
+declare -A FILES=()     # パス → 1（全台のファイルの和集合）
+COMMON=()               # 全台で同じファイル
+declare -A PER_HOST=()  # サーバー名 → 台ごとのファイル（改行区切り）
+
+parse_args() {
+  case "${1:-}" in
+    --server=*) SERVERS="${1#*=}"; IFS=, read -ra HOSTS <<< "$SERVERS" ;;
+    --to=*) TO="${1#*=}" ;;
+    *) echo "使い方: $0 --server=isu1,isu2,isu3 | --to=<名前>" >&2; exit 2 ;;
+  esac
+}
 
 # COLLECT_PATHS の下のファイルを「ハッシュ  パス」で 1 行ずつ出す。ssh の先でも動くよう、関数ごと送る
 list_hashes() {
@@ -29,12 +37,58 @@ list_hashes() {
     if sudo test -e "$p"; then sudo find "$p" -type f; else echo "ない: $p" >&2; fi
   done | sort | xargs -r -d '\n' sudo sha256sum
 }
+
 remote_list_hashes() {  # $1: サーバー名
   ssh -o BatchMode=yes "$1" "$(declare -f list_hashes); list_hashes $(printf '%q ' "${COLLECT_PATHS[@]}")"
 }
+
+# --to: このサーバーのファイルを、すべて conf/<名前>/ に集める
+collect_local() {
+  local f dst
+  while read -r _ f; do
+    dst="$REPO_DIR/conf/$TO$f"
+    mkdir -p "$(dirname "$dst")"
+    sudo cat "$f" > "$dst"
+    echo "$f → conf/$TO$f"
+  done < <(list_hashes "${COLLECT_PATHS[@]}")
+}
+
+# 全台のファイルのハッシュを HASH と FILES に集める
+collect_hashes() {
+  local h sum f
+  for h in "${HOSTS[@]}"; do
+    while read -r sum f; do
+      HASH["$h|$f"]=$sum; FILES["$f"]=1
+    done < <(remote_list_hashes "$h")
+  done
+}
+
+is_common() {  # $1: パス。全台にあり、ハッシュが同じなら真
+  local h first="${HASH["${HOSTS[0]}|$1"]:-}"
+  [[ -n $first ]] || return 1
+  for h in "${HOSTS[@]}"; do [[ ${HASH["$h|$1"]:-} == "$first" ]] || return 1; done
+}
+
+# ファイルを COMMON と PER_HOST に分け、使わなくなった写しを conf/ から消す（conf/<サーバー名>/ が conf/default/ より優先されるため）
+classify() {
+  local f h all
+  mapfile -t all < <(printf '%s\n' "${!FILES[@]}" | sort)
+  for f in "${all[@]}"; do
+    if is_common "$f"; then
+      COMMON+=("$f")
+      for h in "${HOSTS[@]}"; do rm -f "$REPO_DIR/conf/$h$f"; done
+    else
+      rm -f "$REPO_DIR/conf/default$f"
+      for h in "${HOSTS[@]}"; do
+        if [[ -n ${HASH["$h|$f"]:-} ]]; then PER_HOST[$h]+="$f"$'\n'; else rm -f "$REPO_DIR/conf/$h$f"; fi
+      done
+    fi
+  done
+}
+
 # $1: サーバー名、$2: 置き場所（conf/ の下の名前）、残り: ファイルの絶対パス
 fetch() {
-  local h=$1 to=$2; shift 2
+  local h=$1 to=$2 f; shift 2
   mkdir -p "$REPO_DIR/conf/$to"
   ssh -o BatchMode=yes "$h" "sudo tar -C / -cf - $(printf '%q ' "${@#/}")" \
     | tar -C "$REPO_DIR/conf/$to" --no-same-owner --no-same-permissions -xf -
@@ -42,52 +96,35 @@ fetch() {
   for f in "$@"; do chmod 644 "$REPO_DIR/conf/$to$f"; echo "[$h] $f → conf/$to$f"; done
 }
 
-if [[ -n $TO ]]; then
-  while read -r _ f; do
-    dst="$REPO_DIR/conf/$TO$f"
-    mkdir -p "$(dirname "$dst")"
-    sudo cat "$f" > "$dst"
-    echo "$f → conf/$TO$f"
-  done < <(list_hashes "${COLLECT_PATHS[@]}")
-  echo "集めたら git diff で確かめて commit し、./deploy --dry-run で差分が出ないことを確かめる"
-  exit 0
-fi
+# 共通のファイルは 1 台目から、台ごとのファイルは各台から取る
+fetch_all() {
+  local h fs
+  if (( ${#COMMON[@]} )); then fetch "${HOSTS[0]}" default "${COMMON[@]}"; fi
+  for h in "${HOSTS[@]}"; do
+    [[ -n ${PER_HOST[$h]:-} ]] || continue
+    mapfile -t fs < <(printf '%s' "${PER_HOST[$h]}")
+    fetch "$h" "$h" "${fs[@]}"
+  done
+}
 
-IFS=, read -ra HOSTS <<< "$SERVERS"
-declare -A HASH=()   # "サーバー|パス" → ハッシュ
-declare -A FILES=()  # パス → 1（全台のファイルの和集合）
-for h in "${HOSTS[@]}"; do
-  while read -r sum f; do
-    HASH["$h|$f"]=$sum; FILES["$f"]=1
-  done < <(remote_list_hashes "$h")
-done
+print_per_host() {
+  local h
+  echo
+  echo "台ごとに中身が違う（または一部の台にしか無い）ファイル:"
+  for h in "${HOSTS[@]}"; do printf '%s' "${PER_HOST[$h]:-}" | sed "s|^|  conf/$h|"; done
+}
 
-common=()
-declare -A per_host=()  # サーバー名 → 台ごとのファイル（改行区切り）
-mapfile -t all < <(printf '%s\n' "${!FILES[@]}" | sort)
-for f in "${all[@]}"; do
-  first="${HASH["${HOSTS[0]}|$f"]:-}" same=1
-  for h in "${HOSTS[@]}"; do [[ ${HASH["$h|$f"]:-} == "$first" && -n $first ]] || same=0; done
-  if (( same )); then
-    common+=("$f")
-    # 前に台ごとに分けていたファイルが共通に戻ったら、古い写しを消す（conf/<サーバー名>/ が優先されるため）
-    for h in "${HOSTS[@]}"; do rm -f "$REPO_DIR/conf/$h$f"; done
+main() {
+  parse_args "$@"
+  if [[ -n $TO ]]; then
+    collect_local
   else
-    rm -f "$REPO_DIR/conf/default$f"
-    for h in "${HOSTS[@]}"; do
-      if [[ -n ${HASH["$h|$f"]:-} ]]; then per_host[$h]+="$f"$'\n'; else rm -f "$REPO_DIR/conf/$h$f"; fi
-    done
+    collect_hashes
+    classify
+    fetch_all
+    print_per_host
   fi
-done
+  echo "集めたら git diff で確かめて commit し、./deploy --dry-run で差分が出ないことを確かめる"
+}
 
-(( ${#common[@]} )) && fetch "${HOSTS[0]}" default "${common[@]}"
-for h in "${HOSTS[@]}"; do
-  [[ -n ${per_host[$h]:-} ]] || continue
-  mapfile -t fs < <(printf '%s' "${per_host[$h]}")
-  fetch "$h" "$h" "${fs[@]}"
-done
-
-echo
-echo "台ごとに中身が違う（または一部の台にしか無い）ファイル:"
-for h in "${HOSTS[@]}"; do printf '%s' "${per_host[$h]:-}" | sed "s|^|  conf/$h|"; done
-echo "集めたら git diff で確かめて commit し、./deploy --dry-run で差分が出ないことを確かめる"
+main "$@"
