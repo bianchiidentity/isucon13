@@ -275,7 +275,7 @@ EOF
 }
 
 main() {
-  local p name ip my_ips self="" names failed=()
+  local p name ip my_ips self="" failed=()
   parse_args "$@"
   check_first_server
 
@@ -310,8 +310,8 @@ main() {
   if (( ${#failed[@]} )); then
     die "失敗: ${failed[*]}。直してから、もう一度同じコマンドを実行する"
   fi
-  names=$(printf '%s\n' "${PAIRS[@]}" | cut -d= -f1 | paste -sd,)
-  log "完了。次は isucon で ./deploy --server=$names --dry-run を実行し、全台の差分を確かめる"
+  # ./deploy の mysql の段は、setup.sh（setup-tools）が入れる mysqldef を使うので、先に setup.sh を実行する
+  log "完了。次は各台で script/setup/setup.sh を実行する（script/setup/README.md の「当日の最初の順番」）"
 }
 
 main "$@"
