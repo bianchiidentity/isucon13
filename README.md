@@ -42,5 +42,6 @@
 | 場所 | 用途 |
 |---|---|
 | [`dora-isucon-overview`](.claude/skills/dora-isucon-overview/SKILL.md) | 問題のサイトの全体像（エンドポイント、構成、ER 図など）を 1 つの文書にまとめる |
+| [`dora-isucon-deploy-adapt`](.claude/skills/dora-isucon-deploy-adapt/SKILL.md) | 当日の最初に、deploy（`deploy.env` とスクリプト）を問題の構成に合わせる |
 | [`dora-isucon-tuning`](.claude/skills/dora-isucon-tuning/SKILL.md) | チューニングの進め方 |
 | [`.claude/knowledge/isucon/`](.claude/knowledge/isucon/README.md) | 過去問の演習で得たナレッジ（ジャンル G0〜G7）。自動では読み込まれない |
