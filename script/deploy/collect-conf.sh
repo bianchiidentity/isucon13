@@ -19,6 +19,11 @@ source "$DEPLOY_DIR/deploy.env"
 
 # コマンドライン引数から決まる値。読むのは parse_args だけで、ほかの関数には main が引数で渡す
 SERVERS="" TO=""
+# 各台のハッシュと、その振り分けの結果。bash は連想配列を引数で渡せないので、ここで宣言して関数から読み書きする
+declare -A HASH=()      # "サーバー名|パス" → ハッシュ（collect_hashes が書く）
+declare -A FILES=()     # パス → 1。全台のファイルの和集合（collect_hashes が書く）
+COMMON=()               # 全台で同じファイルのパス（classify が書く）
+declare -A PER_HOST=()  # サーバー名 → 台ごとのファイルのパス、改行区切り（classify が書く）
 
 usage() { echo "使い方: $0 --server=isu1,isu2,isu3 | --to=<名前>" >&2; exit 2; }
 
@@ -49,90 +54,79 @@ collect_local() {  # $1: 置き場所のディレクトリ、残り: 集める�
   done < <(list_hashes "$@")
 }
 
-# 各台のファイルのハッシュを「サーバー名 ハッシュ  パス」で出す。つながらない台があれば失敗する
-collect_hashes() {  # $1: サーバー名（カンマ区切り）、残り: 集めるパス
-  local hosts h out; IFS=, read -ra hosts <<< "$1"; shift
-  for h in "${hosts[@]}"; do
-    out=$(ssh -n -o BatchMode=yes "$h" "$(declare -f list_hashes); list_hashes $(printf '%q ' "$@")")
-    [[ -z $out ]] || sed "s|^|$h |" <<< "$out"
-  done
+# 1 台のハッシュを HASH と FILES に足す。つながらなければ失敗する（その台に何も無いとみなすと、conf/default を消してしまう）
+collect_hashes() {  # $1: サーバー名、残り: 集めるパス
+  local h=$1 out sum f; shift
+  out=$(ssh -n -o BatchMode=yes "$h" "$(declare -f list_hashes); list_hashes $(printf '%q ' "$@")")
+  while read -r sum f; do
+    [[ -n $sum ]] || continue
+    HASH["$h|$f"]=$sum; FILES["$f"]=1
+  done <<< "$out"
 }
 
-# 標準入力のハッシュから、ファイルごとの置き場所を「置き場所 取る台 パス」で出す。
-# 全台にあり中身が同じなら default（1 台目から取る）、それ以外はそのファイルがある各台
-classify() {  # $1: サーバー名（カンマ区切り）
-  awk -v hosts="$1" '
-    BEGIN { n = split(hosts, H, ",") }
-    { p = $0; sub(/^[^ ]+ [^ ]+  /, "", p); sum[$1, p] = $2; files[p] = 1 }
-    END {
-      for (p in files) {
-        # sum[...] を読むだけでキーが作られるので、全台にあるかを in で確かめてから中身を比べる
-        same = 1
-        for (i = 1; i <= n; i++) if (!((H[i], p) in sum)) same = 0
-        if (same) for (i = 2; i <= n; i++) if (sum[H[i], p] != sum[H[1], p]) same = 0
-        if (same) { print "default", H[1], p; continue }
-        for (i = 1; i <= n; i++) if ((H[i], p) in sum) print H[i], H[i], p
-      }
-    }' | sort
+is_common() {  # $1: パス、残り: サーバー名。全台にあり、ハッシュが同じなら真
+  local p=$1 h first; shift
+  first="${HASH["$1|$p"]:-}"
+  [[ -n $first ]] || return 1
+  for h in "$@"; do [[ ${HASH["$h|$p"]:-} == "$first" ]] || return 1; done
 }
 
-# 標準入力の置き場所に無いほうの写しを消す（conf/<サーバー名>/ が conf/default/ より優先されるため、古い写しが残ると効いてしまう）
-prune_stale() {  # $1: conf のディレクトリ、$2: サーバー名（カンマ区切り）
-  local conf=$1 hosts to p d; IFS=, read -ra hosts <<< "$2"
-  local -A planned=()
-  local -a paths=()
-  while read -r to _ p; do
-    [[ -n $to ]] || continue  # 空の入力（<<< "" は空行を 1 行渡す）
-    planned["$to|$p"]=1; paths+=("$p")
-  done
-  (( ${#paths[@]} )) || return 0
-  mapfile -t paths < <(printf '%s\n' "${paths[@]}" | sort -u)
-  for p in "${paths[@]}"; do
-    for d in default "${hosts[@]}"; do
-      [[ -n ${planned["$d|$p"]:-} ]] || rm -f "$conf/$d$p"
-    done
+# ファイルを COMMON と PER_HOST に分け、使わなくなった写しを消す（conf/<サーバー名>/ が conf/default/ より優先されるため、古い写しが残ると効いてしまう）
+classify() {  # $1: conf のディレクトリ、残り: サーバー名
+  local conf=$1 f h all; shift
+  mapfile -t all < <(printf '%s\n' "${!FILES[@]}" | sort)
+  for f in "${all[@]}"; do
+    if is_common "$f" "$@"; then
+      COMMON+=("$f")
+      for h in "$@"; do rm -f "$conf/$h$f"; done
+    else
+      rm -f "$conf/default$f"
+      for h in "$@"; do
+        if [[ -n ${HASH["$h|$f"]:-} ]]; then PER_HOST[$h]+="$f"$'\n'; else rm -f "$conf/$h$f"; fi
+      done
+    fi
   done
 }
 
 fetch() {  # $1: 置き場所のディレクトリ、$2: 取る台、残り: ファイルの絶対パス
   local dir=$1 h=$2 f; shift 2
   mkdir -p "$dir"
-  # -n: ssh が呼び出し元（fetch_planned）の標準入力を読み尽くさないように
+  # -n: ssh が呼び出し元の標準入力を読まないように
   ssh -n -o BatchMode=yes "$h" "sudo tar -C / -cf - $(printf '%q ' "${@#/}")" \
     | tar -C "$dir" --no-same-owner --no-same-permissions -xf -
   # tar は実行ビットを残すが、git の差分に出ないよう、前と同じく 644 にそろえる
   for f in "$@"; do chmod 644 "$dir$f"; echo "[$h] $f → $dir$f"; done
 }
 
-# 標準入力の置き場所に従い、置き場所と取る台の組ごとにまとめて取る
-fetch_planned() {  # $1: conf のディレクトリ
-  local conf=$1 to h p key last="" files=()
-  while read -r to h p; do
-    [[ -n $to ]] || continue
-    key="$to $h"
-    if [[ $key != "$last" && -n $last ]]; then fetch "$conf/${last% *}" "${last#* }" "${files[@]}"; files=(); fi
-    last=$key; files+=("$p")
+# 共通のファイルは 1 台目から、台ごとのファイルは各台から取る
+fetch_all() {  # $1: conf のディレクトリ、残り: サーバー名
+  local conf=$1 h fs; shift
+  if (( ${#COMMON[@]} )); then fetch "$conf/default" "$1" "${COMMON[@]}"; fi
+  for h in "$@"; do
+    [[ -n ${PER_HOST[$h]:-} ]] || continue
+    mapfile -t fs < <(printf '%s' "${PER_HOST[$h]}")
+    fetch "$conf/$h" "$h" "${fs[@]}"
   done
-  if [[ -n $last ]]; then fetch "$conf/${last% *}" "${last#* }" "${files[@]}"; fi
 }
 
-print_per_host() {  # 標準入力: 置き場所
+print_per_host() {  # $@: サーバー名
+  local h
   echo
   echo "台ごとに中身が違う（または一部の台にしか無い）ファイル:"
-  awk '$1 != "default" { p = $0; sub(/^[^ ]+ [^ ]+ /, "", p); print "  conf/" $1 p }'
+  for h in "$@"; do printf '%s' "${PER_HOST[$h]:-}" | sed "s|^|  conf/$h|"; done
 }
 
 main() {
   parse_args "$@"
-  local conf="$REPO_DIR/conf" hashes plan
+  local conf="$REPO_DIR/conf" hosts h
   if [[ -n $TO ]]; then
     collect_local "$conf/$TO" "${COLLECT_PATHS[@]}"
   else
-    hashes=$(collect_hashes "$SERVERS" "${COLLECT_PATHS[@]}")
-    plan=$(classify "$SERVERS" <<< "$hashes")
-    prune_stale "$conf" "$SERVERS" <<< "$plan"
-    fetch_planned "$conf" <<< "$plan"
-    print_per_host <<< "$plan"
+    IFS=, read -ra hosts <<< "$SERVERS"
+    for h in "${hosts[@]}"; do collect_hashes "$h" "${COLLECT_PATHS[@]}"; done
+    classify "$conf" "${hosts[@]}"
+    fetch_all "$conf" "${hosts[@]}"
+    print_per_host "${hosts[@]}"
   fi
   echo "集めたら git diff で確かめて commit し、./deploy --dry-run で差分が出ないことを確かめる"
 }
