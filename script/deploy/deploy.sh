@@ -54,7 +54,13 @@ WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
 deploy_local() {
-  if [[ -z $NAME ]]; then NAME="$(server_name)"; fi
+  local own
+  own="$(server_name)"
+  # --server に渡した名前（ssh の別名）が、この台の名前と違うと、roles.env と conf/<名前>/ が引けずに全部入りとして動く
+  if [[ -n $NAME && $NAME != "$own" ]]; then
+    die "--server の名前 $NAME と、この台の名前 $own（$SERVER_NAME_FILE）が違う。--server=$own で実行する"
+  fi
+  NAME=$own
   ROLES="$(roles_of "$NAME")"
   # 同じサーバーで 2 つの ./deploy が同時に動くと、片方の巻き戻しがもう片方の反映を消す
   exec 9> /tmp/isucon-deploy.lock
