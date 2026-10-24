@@ -73,8 +73,15 @@ remote::check_pushed() {
   REMOTE_BRANCH="$(git -C "$REPO_DIR" symbolic-ref --short HEAD)" || die "ブランチにいない"
   git -C "$REPO_DIR" fetch -q origin
   REMOTE_SHA="$(git -C "$REPO_DIR" rev-parse HEAD)"
-  [[ $REMOTE_SHA == "$(git -C "$REPO_DIR" rev-parse -q --verify "origin/$REMOTE_BRANCH" || true)" ]] \
-    || die "HEAD が origin/$REMOTE_BRANCH と一致しない。push してから実行する"
+  local origin_sha
+  origin_sha="$(git -C "$REPO_DIR" rev-parse -q --verify "origin/$REMOTE_BRANCH" || true)"
+  # dry-run は取り込まないので、origin が進んでいるだけなら、本番で取り込んだ後と同じ origin の版で差分を見る
+  if dry && [[ -n $origin_sha && $REMOTE_SHA != "$origin_sha" ]] \
+    && git -C "$REPO_DIR" merge-base --is-ancestor "$REMOTE_SHA" "$origin_sha"; then
+    echo "（dry-run）origin/$REMOTE_BRANCH が進んでいるので、その版（${origin_sha:0:7}）で差分を見る"
+    REMOTE_SHA=$origin_sha
+  fi
+  [[ $REMOTE_SHA == "$origin_sha" ]] || die "HEAD が origin/$REMOTE_BRANCH と一致しない。push してから実行する"
 }
 
 remote::fan_out() {
@@ -91,7 +98,7 @@ remote::fan_out() {
   for h in "${hosts[@]}"; do
     if role_has "$(roles_of "$h")" mysql; then first+=("$h"); else rest+=("$h"); fi
   done
-  log "$REMOTE_BRANCH $(git -C "$REPO_DIR" log -1 --format='%h %s')"
+  log "$REMOTE_BRANCH $(git -C "$REPO_DIR" log -1 --format='%h %s' "$REMOTE_SHA")"
   echo "1 段目（mysql）: ${first[*]:-なし}、2 段目: ${rest[*]:-なし}$( (( SERIAL )) && echo '（直列）' || echo '（並列）')"
 
   if (( ${#first[@]} )) && ! remote::deploy_group "${first[@]}"; then

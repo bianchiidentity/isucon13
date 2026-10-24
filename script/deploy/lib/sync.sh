@@ -11,7 +11,7 @@ sync::git() { git -C "$REPO_DIR" "$@"; }
 # $1: 切り替えるブランチ（空なら今のブランチ）、残り: 実行し直すときの ./deploy の引数
 sync::run() {
   local target=$1 branch before; shift
-  sync::git fetch -q origin
+  sync::git fetch -q origin || die "origin から取得できない（GitHub への接続など）。--no-pull で取り込まずに反映する"
   if dry; then
     sync::show_pending "${target:-$(sync::git symbolic-ref --short -q HEAD || true)}"
     return 0
@@ -53,7 +53,11 @@ sync::merge() {  # $1: origin/<ブランチ>
     conflicts="$(sync::git diff --name-only --diff-filter=U | paste -sd' ' -)"
     # 途中のマージが残っていれば取り消し、マージする前の状態に戻す
     if sync::git rev-parse -q --verify MERGE_HEAD > /dev/null; then sync::git merge --abort; fi
-    die "${1} をマージできない${conflicts:+（衝突: ${conflicts}）}。手でマージしてから実行するか、--no-pull で今の作業ツリーを反映する"
+    if [[ -n $conflicts ]]; then
+      die "${1} をマージできない（衝突: ${conflicts}）。手でマージしてから実行するか、--no-pull で今の作業ツリーを反映する"
+    fi
+    # 衝突ではなく、コミットしていない変更が上書きされるなどで、git がマージを始めなかった
+    die "${1} をマージできない（上の git のメッセージを見る）。コミットしていない変更が原因なら、commit してから実行するか、--no-pull で反映する"
   fi
 }
 
