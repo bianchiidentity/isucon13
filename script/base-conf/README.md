@@ -5,10 +5,15 @@
 
 ## 使い方
 
-各サーバーで実行する。
+当日は、ベースラインのベンチを回した直後に、1 台目の人が isucon で全台に入れる（[当日の最初の順番](../setup/README.md#当日の最初の順番)）。全台の clone と、台どうしの ssh は `join.sh` が作ってある。
 
 ```bash
-git clone https://github.com/bianchiidentity/isucon13.git ~/isucon13
+for h in isu1 isu2 isu3; do echo "== $h"; ssh $h 'cd ~/isucon13 && git pull -q && sudo script/base-conf/apply.sh' && echo "成功: $h" || echo "失敗: $h"; done
+```
+
+1 台で実行するときは、その台で次のとおり。
+
+```bash
 cd ~/isucon13
 sudo script/base-conf/apply.sh --dry-run  # 変わる内容を diff で確かめる
 sudo script/base-conf/apply.sh            # 適用する
