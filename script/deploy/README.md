@@ -115,17 +115,7 @@ git add -A && git commit -m 'webapp を入れる' && git push
 sudo systemctl start <APP_SERVICE>
 ```
 
-2 台目以降:
-
-```bash
-cd ~/isucon13 && git pull
-sudo systemctl stop <APP_SERVICE>
-mv /home/isucon/webapp /home/isucon/webapp.orig
-ln -s ~/isucon13/webapp /home/isucon/webapp
-# .gitignore にしたデータは git では届かないので、元の webapp から移す（例: SQLite のファイル）
-cp -a /home/isucon/webapp.orig/<データのディレクトリ> ~/isucon13/webapp/
-sudo systemctl start <APP_SERVICE>
-```
+2 台目以降は、1 台目で [`script/setup-repo/join.sh`](../setup-repo/README.md) を 1 回実行する。
 
 ## 注意
 
