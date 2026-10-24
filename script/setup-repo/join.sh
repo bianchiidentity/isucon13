@@ -14,8 +14,8 @@ set -euo pipefail
 SETUP_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SETUP_DIR/../.." && pwd)"
 source "$REPO_DIR/script/lib/common.sh"
-# shellcheck source=../deploy/deploy.env
 require_file "$REPO_DIR/script/deploy/deploy.env"
+# shellcheck source=../deploy/deploy.env
 source "$REPO_DIR/script/deploy/deploy.env"
 
 WEBAPP_LINK=/home/isucon/webapp   # systemd や env.sh が指す webapp の場所。リポジトリの webapp へのリンクにする
