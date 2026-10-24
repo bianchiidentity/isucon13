@@ -2,11 +2,12 @@
 # 1 台目（このサーバー）と同じリポジトリの状態を、ほかのサーバーに作る。1 台目を git にした後に、1 台目で 1 回実行する
 #
 # 使い方（手元から ssh -A で 1 台目に入り、ログインしたユーザーのまま）:
-#   sudo --preserve-env=SSH_AUTH_SOCK /home/isucon/isucon13/script/setup-repo/join.sh [--login=ubuntu] [--dry-run] \
+#   sudo --preserve-env=SSH_AUTH_SOCK /home/isucon/isucon13/script/setup-repo/join.sh [--login=ubuntu] [--dry-run] [--allow-public] \
 #     isu1=192.168.0.11 isu2=192.168.0.12 isu3=192.168.0.13
 #
 # 名前=IP を全台ぶん並べる（このサーバー自身も）。名前は ./deploy --server= と conf/<名前>/ に使い、各台の /etc/isucon-server-name に書く。
 # ほかのサーバーへの最初の接続には、転送した手元の鍵で --login のユーザーとして入る（isucon に切り替えると転送が切れるので root で動かす）。
+# リポジトリが public なら止まる（競技が終わるまで内容を公開できない）。過去問の演習で public のリポジトリを使うときは --allow-public を付ける。
 # 何度実行しても同じ結果になる。済んだ段は飛ばす
 set -euo pipefail
 
@@ -19,6 +20,7 @@ source "$REPO_DIR/script/deploy/deploy.env"
 WEBAPP_LINK=/home/isucon/webapp   # systemd や env.sh が指す webapp の場所。リポジトリの webapp へのリンクにする
 LOGIN=ubuntu
 DRY=0
+ALLOW_PUBLIC=0
 PAIRS=()
 
 as_app() { sudo -u "$APP_USER" -H "$@"; }
@@ -30,6 +32,7 @@ parse_args() {
     case $arg in
       --login=*) LOGIN="${arg#*=}" ;;
       --dry-run) DRY=1 ;;
+      --allow-public) ALLOW_PUBLIC=1 ;;
       *=*) PAIRS+=("$arg") ;;
       *) die "unknown argument: $arg（名前=IP で渡す）" ;;
     esac
@@ -54,6 +57,7 @@ check_first_server() {
   if [[ $ORIGIN != git@* ]]; then
     die "origin が ssh ではない（$ORIGIN）。git remote set-url origin git@github.com:<owner>/<repo>.git"
   fi
+  check_private
 
   if [[ -n $(app_git status --porcelain --untracked-files=no) ]]; then
     die "コミットしていない変更がある。commit と push をしてから実行する"
@@ -77,6 +81,25 @@ check_first_server() {
   if (( ! DRY )) && ! ssh-add -l > /dev/null 2>&1; then
     die "手元の鍵が転送されていない。手元から ssh -A で入り直し、sudo に --preserve-env=SSH_AUTH_SOCK を付ける"
   fi
+}
+
+# リポジトリが private かを確かめる。レギュレーションで、競技が終わるまで内容を公開・共有できない。
+# 認証なしの https で読めたら public（private なら、GitHub は認証を求めて失敗する）
+check_private() {
+  local url
+  if [[ $ORIGIN != git@github.com:* ]]; then
+    echo "注意: GitHub ではないので、private かを確かめていない（$ORIGIN）"
+    return 0
+  fi
+  url="https://github.com/${ORIGIN#git@github.com:}"
+  if ! GIT_TERMINAL_PROMPT=0 git -c credential.helper= ls-remote "$url" HEAD > /dev/null 2>&1; then
+    return 0
+  fi
+  if (( ALLOW_PUBLIC )); then
+    echo "注意: リポジトリが public（$url）。--allow-public なので続ける"
+    return 0
+  fi
+  die "リポジトリが public になっている（$url）。競技が終わるまで private にする（レギュレーション）。過去問の演習なら --allow-public を付ける"
 }
 
 # 全台の ~/.ssh/config に書く、名前と IP の対応（CONFIG_BLOCK）と、それを書くコマンド（UPDATE_CONFIG）を作る。
