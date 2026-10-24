@@ -4,14 +4,14 @@
 # 使い方: sudo script/setup-tools/setup-tools.sh            入れる
 #         sudo script/setup-tools/setup-tools.sh --dry-run  入れるものを表示するだけ
 #
-# 1. apt: graphviz（pprof のグラフ）、sysstat（pidstat、iostat、mpstat）
+# 1. apt: graphviz（pprof のグラフ）、sysstat（pidstat、iostat、mpstat）、jq（setup.sh が GitHub の API の応答を読む）
 # 2. mysqldef（./deploy がスキーマの差分を当てる）を版を固定して入れる
 # 入っているものは飛ばす。何度実行しても同じ結果になる。
-# alp、pt-query-digest、jq は base-conf が入れるので、ここでは入れない
+# alp と pt-query-digest は base-conf が入れるので、ここでは入れない（jq は base-conf も入れるが、setup.sh が先に使う）
 set -euo pipefail
 
 MYSQLDEF_VERSION=v3.11.26
-APT_PACKAGES=(graphviz sysstat)
+APT_PACKAGES=(graphviz sysstat jq)
 # sysstat が入れる定期収集。10 分ごとに sadc が動き、計測に混ざるので止める（pidstat などは止めても使える）
 SYSSTAT_UNITS=(sysstat.service sysstat-collect.timer sysstat-summary.timer)
 
@@ -27,6 +27,12 @@ log() { printf '\n== %s\n' "$*"; }
 dry() { [[ $MODE == dry-run ]]; }
 
 # --- 1. apt ---
+apt_install() {
+  # needrestart がライブラリの更新を理由に nginx や MySQL を再起動しないよう、一覧の表示だけにする
+  DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l \
+    apt-get -o DPkg::Lock::Timeout=120 install -y -qq --no-install-recommends "$@" >/dev/null
+}
+
 install_apt() {
   log "apt のパッケージ"
   local missing=() p
@@ -38,11 +44,15 @@ install_apt() {
   else
     echo "入れる: ${missing[*]}"
     if ! dry; then
-      # 一覧が古くて見つからないときだけ update する。update は自動アップデートの対象を増やすので、なるべく避ける
+      # 一覧が古いときだけ update する。update は自動アップデートの対象を増やすので、なるべく避ける。
+      # 名前が一覧に無いときに加えて、一覧にある版がミラーから消えて 404 になったときも update してやり直す
+      # （isucon13 の AMI で、演習の 1 週間後に依存の libharfbuzz0b が 404 になった）
       apt-cache show "${missing[@]}" >/dev/null 2>&1 || apt-get -o DPkg::Lock::Timeout=120 update -qq
-      # needrestart がライブラリの更新を理由に nginx や MySQL を再起動しないよう、一覧の表示だけにする
-      DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l \
-        apt-get -o DPkg::Lock::Timeout=120 install -y -qq --no-install-recommends "${missing[@]}" >/dev/null
+      if ! apt_install "${missing[@]}"; then
+        echo "失敗したので、パッケージの一覧を更新してやり直す"
+        apt-get -o DPkg::Lock::Timeout=120 update -qq
+        apt_install "${missing[@]}"
+      fi
     fi
   fi
   if ! dry && dpkg-query -W -f='${Status}' sysstat 2>/dev/null | grep -q 'install ok installed'; then
@@ -70,6 +80,7 @@ show_versions() {
   log "版"
   command -v dot >/dev/null && dot -V 2>&1
   command -v pidstat >/dev/null && pidstat -V 2>&1 | head -1
+  command -v jq >/dev/null && jq --version
   command -v mysqldef >/dev/null && mysqldef --version
   for u in "${SYSSTAT_UNITS[@]}"; do
     systemctl cat "$u" >/dev/null 2>&1 && printf '%s: %s\n' "$u" "$(systemctl is-enabled "$u" 2>/dev/null || true)"
