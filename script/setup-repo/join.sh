@@ -5,7 +5,7 @@
 #   sudo --preserve-env=SSH_AUTH_SOCK /home/isucon/isucon13/script/setup-repo/join.sh [--login=ubuntu] [--dry-run] \
 #     isu1=192.168.0.11 isu2=192.168.0.12 isu3=192.168.0.13
 #
-# 名前=IP を全台ぶん並べる（このサーバー自身も）。名前は ./deploy --server= と conf/<名前>/ に使う。
+# 名前=IP を全台ぶん並べる（このサーバー自身も）。名前は ./deploy --server= と conf/<名前>/ に使い、各台の /etc/isucon-server-name に書く。
 # ほかのサーバーへの最初の接続には、転送した手元の鍵で --login のユーザーとして入る（isucon に切り替えると転送が切れるので root で動かす）。
 # 何度実行しても同じ結果になる。済んだ段は飛ばす
 set -euo pipefail
@@ -117,9 +117,20 @@ setup_local_ssh() {
   fi
 }
 
+# このサーバーの名前を書く。./deploy が conf/<名前>/ と roles.env を引くのに使う
+write_local_name() {  # $1: 名前
+  if [[ $(cat "$SERVER_NAME_FILE" 2> /dev/null) == "$1" ]]; then
+    return 0
+  fi
+  echo "$SERVER_NAME_FILE に $1 を書く"
+  if (( ! DRY )); then
+    echo "$1" > "$SERVER_NAME_FILE"
+  fi
+}
+
 # 手元の鍵で $LOGIN として入り、isucon に鍵（deploy key と、ほかの台からの ssh）、~/.ssh/config、GitHub の known_hosts を置く
-remote_keys() {  # $1: IP
-  local ip=$1 priv pub
+remote_keys() {  # $1: IP、$2: 名前
+  local ip=$1 name=$2 priv pub
   priv="$(base64 -w0 "$KEY")"
   pub="$(cat "$KEY.pub")"
   # shellcheck disable=SC2087  # 変数はこちらで展開してから送る
@@ -157,6 +168,10 @@ if ! grep -q '^github.com ' known_hosts; then
 fi
 
 bash -c '$UPDATE_CONFIG' _ config
+if [ "\$(cat $SERVER_NAME_FILE 2> /dev/null)" != '$name' ]; then
+  echo '$name' > $SERVER_NAME_FILE
+  echo "$SERVER_NAME_FILE に $name を書いた"
+fi
 chmod 600 id_ed25519 authorized_keys
 chown $APP_USER:$APP_USER id_ed25519 id_ed25519.pub authorized_keys known_hosts config
 EOF
@@ -237,13 +252,22 @@ EOF
 }
 
 main() {
-  local p name ip my_ips names failed=()
+  local p name ip my_ips self="" names failed=()
   parse_args "$@"
   check_first_server
-  build_config
-  setup_local_ssh
 
   my_ips=" $(hostname -I) "
+  for p in "${PAIRS[@]}"; do
+    if [[ $my_ips == *" ${p#*=} "* ]]; then self=${p%%=*}; fi
+  done
+  if [[ -z $self ]]; then
+    die "このサーバーの IP（$(hostname -I | xargs)）が 名前=IP に無い。このサーバー自身も並べる"
+  fi
+
+  build_config
+  setup_local_ssh
+  write_local_name "$self"
+
   for p in "${PAIRS[@]}"; do
     name=${p%%=*} ip=${p#*=}
     if [[ $my_ips == *" $ip "* ]]; then
@@ -252,10 +276,10 @@ main() {
     fi
     log "$name（$ip）"
     if (( DRY )); then
-      echo "[dry-run] $LOGIN@$ip で $APP_USER に鍵を置き、$REPO_DIR に clone し（$BRANCH ${SHA:0:7}）、$WEBAPP_LINK をリンクにする"
+      echo "[dry-run] $LOGIN@$ip で $APP_USER に鍵を置き、$SERVER_NAME_FILE に $name を書き、$REPO_DIR に clone し（$BRANCH ${SHA:0:7}）、$WEBAPP_LINK をリンクにする"
       continue
     fi
-    if ! remote_keys "$ip" || ! remote_repo "$name"; then
+    if ! remote_keys "$ip" "$name" || ! remote_repo "$name"; then
       failed+=("$name")
     fi
   done

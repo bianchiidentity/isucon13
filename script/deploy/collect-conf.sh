@@ -14,6 +14,7 @@ shopt -s inherit_errexit
 
 DEPLOY_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$DEPLOY_DIR/../.." && pwd)"
+source "$REPO_DIR/script/lib/common.sh"
 # shellcheck source=deploy.env
 source "$DEPLOY_DIR/deploy.env"
 
@@ -52,6 +53,15 @@ collect_local() {  # $1: 置き場所のディレクトリ、残り: 集める�
     sudo cat "$f" > "$dir$f"
     echo "$f → $dir$f"
   done < <(list_hashes "$@")
+}
+
+# --server に渡した名前が、その台の名前（join.sh が書いたもの）と同じか。違うと ./deploy が引かない conf/<名前>/ に集めてしまう
+check_name() {  # $1: サーバー名
+  local own
+  own=$(ssh -n -o BatchMode=yes "$1" "cat $SERVER_NAME_FILE 2> /dev/null || true")
+  if [[ $own != "$1" ]]; then
+    die "$1 の名前が ${own:-（$SERVER_NAME_FILE が無い）} になっている。join.sh で決めた名前を --server に渡す"
+  fi
 }
 
 # 1 台のハッシュを HASH と FILES に足す。つながらなければ失敗する（その台に何も無いとみなすと、conf/default を消してしまう）
@@ -123,6 +133,7 @@ main() {
     collect_local "$conf/$TO" "${COLLECT_PATHS[@]}"
   else
     IFS=, read -ra hosts <<< "$SERVERS"
+    for h in "${hosts[@]}"; do check_name "$h"; done
     for h in "${hosts[@]}"; do collect_hashes "$h" "${COLLECT_PATHS[@]}"; done
     classify "$conf" "${hosts[@]}"
     fetch_all "$conf" "${hosts[@]}"
