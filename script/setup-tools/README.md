@@ -1,6 +1,6 @@
 # setup-tools
 
-base-conf が入れない計測と運用のツールを入れるスクリプト。base-conf の後に、各サーバーで実行する。
+base-conf が入れない計測と運用のツールを入れるスクリプト。[`setup.sh`](../setup/README.md) が自動アップデートを止めてから呼ぶ。単独で実行するときは、base-conf か setup.sh で自動アップデートを止めた後にする。
 
 ```bash
 cd ~/isucon13

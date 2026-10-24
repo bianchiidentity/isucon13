@@ -27,6 +27,12 @@ log() { printf '\n== %s\n' "$*"; }
 dry() { [[ $MODE == dry-run ]]; }
 
 # --- 1. apt ---
+apt_install() {
+  # needrestart がライブラリの更新を理由に nginx や MySQL を再起動しないよう、一覧の表示だけにする
+  DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l \
+    apt-get -o DPkg::Lock::Timeout=120 install -y -qq --no-install-recommends "$@" >/dev/null
+}
+
 install_apt() {
   log "apt のパッケージ"
   local missing=() p
@@ -38,11 +44,15 @@ install_apt() {
   else
     echo "入れる: ${missing[*]}"
     if ! dry; then
-      # 一覧が古くて見つからないときだけ update する。update は自動アップデートの対象を増やすので、なるべく避ける
+      # 一覧が古いときだけ update する。update は自動アップデートの対象を増やすので、なるべく避ける。
+      # 名前が一覧に無いときに加えて、一覧にある版がミラーから消えて 404 になったときも update してやり直す
+      # （isucon13 の AMI で、演習の 1 週間後に依存の libharfbuzz0b が 404 になった）
       apt-cache show "${missing[@]}" >/dev/null 2>&1 || apt-get -o DPkg::Lock::Timeout=120 update -qq
-      # needrestart がライブラリの更新を理由に nginx や MySQL を再起動しないよう、一覧の表示だけにする
-      DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l \
-        apt-get -o DPkg::Lock::Timeout=120 install -y -qq --no-install-recommends "${missing[@]}" >/dev/null
+      if ! apt_install "${missing[@]}"; then
+        echo "失敗したので、パッケージの一覧を更新してやり直す"
+        apt-get -o DPkg::Lock::Timeout=120 update -qq
+        apt_install "${missing[@]}"
+      fi
     fi
   fi
   if ! dry && dpkg-query -W -f='${Status}' sysstat 2>/dev/null | grep -q 'install ok installed'; then
